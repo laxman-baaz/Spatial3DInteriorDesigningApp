@@ -28,8 +28,9 @@ export const project3DTo2D = (
   const currentPitchDeg = current.pitch * (180 / Math.PI);
   const currentYawDeg = current.yaw * (180 / Math.PI);
 
-  // 2. Calculate Difference
-  let diffYaw = target.yaw - currentYawDeg;
+  // 2. Calculate Difference (INVERTED for natural movement)
+  // When you turn RIGHT, you should see things on the RIGHT
+  let diffYaw = currentYawDeg - target.yaw;
   let diffPitch = target.pitch - currentPitchDeg;
 
   // 3. Handle Wrap-Around (Shortest Path)
