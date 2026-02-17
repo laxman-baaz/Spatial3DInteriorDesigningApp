@@ -1,11 +1,7 @@
-import React, {useMemo} from 'react';
-import {StyleSheet, View} from 'react-native';
-import Svg, {Circle, G, Path, Text as SvgText} from 'react-native-svg';
-import Animated, {useAnimatedProps} from 'react-native-reanimated';
+import React from 'react';
+import {Dimensions, StyleSheet, View} from 'react-native';
+import Svg, {Circle, G} from 'react-native-svg';
 import {project3DTo2D} from '../utils/projection';
-
-const AnimatedCircle = Animated.createAnimatedComponent(Circle);
-const AnimatedG = Animated.createAnimatedComponent(G);
 
 interface TargetPoint {
   id: number;
@@ -14,25 +10,37 @@ interface TargetPoint {
   captured: boolean;
 }
 
+const FOV_H = 60;
+const FOV_V = 45;
+
 interface Props {
   orientation: {pitch: number; yaw: number; roll: number};
   points: TargetPoint[];
-  fovH?: number; // approx 60 degrees for most phones
-  fovV?: number; // approx 45 degrees
+  width?: number;
+  height?: number;
+  fovH?: number;
+  fovV?: number;
+  circleRadius?: number;
+  /** Px distance from center to show "aligned" (green). Should match capture threshold. */
+  alignThresholdPx?: number;
 }
 
 const SphereOverlay: React.FC<Props> = ({
   orientation,
   points,
-  fovH = 60,
-  fovV = 45,
+  width: propWidth,
+  height: propHeight,
+  fovH = FOV_H,
+  fovV = FOV_V,
+  circleRadius = 120,
+  alignThresholdPx = 20,
 }) => {
-  // Screen dimensions - using hardcoded for now, but should use hook
-  const width = 360;
-  const height = 640;
+  const {width: dimWidth, height: dimHeight} = Dimensions.get('window');
+  const width = propWidth ?? dimWidth;
+  const height = propHeight ?? dimHeight;
   const cx = width / 2;
   const cy = height / 2;
-  const r = 120; // Radius of the cutout
+  const r = circleRadius;
 
   return (
     <View style={StyleSheet.absoluteFill} pointerEvents="none">
@@ -65,7 +73,7 @@ const SphereOverlay: React.FC<Props> = ({
           const distFromCenter = Math.sqrt(
             Math.pow(x - cx, 2) + Math.pow(y - cy, 2),
           );
-          const isAligned = distFromCenter < 30; // 30px threshold
+          const isAligned = distFromCenter < alignThresholdPx;
 
           return (
             <G key={`dot-${point.id}`} x={x} y={y}>
