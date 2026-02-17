@@ -26,7 +26,9 @@ const PhotosphereScreen = () => {
   const {reset, ...orientation} = useDeviceOrientation();
   const [isCapturing, setIsCapturing] = useState(false);
 
-  // Target points generation
+  // Target points generation - 22 DOTS for complete sphere coverage
+  // Using the SAME coordinate system as working 16-dot version:
+  // Pitch 90 = Horizon (phone upright), 135 = Sky, 45 = Ground
   const generatePoints = (): Array<{
     id: number;
     pitch: number;
@@ -43,39 +45,56 @@ const PhotosphereScreen = () => {
     }> = [];
     let id = 1;
 
-    // Center Ring (Horizon) - 8 points (Every 45 deg)
-    // Pitch 90 is Horizon (Phone Upright)
+    // --- 1. ZENITH (Top/Sky Cap) - 1 dot straight up ---
+    points.push({
+      id: id++,
+      pitch: 180, // Straight up (90° above horizon)
+      yaw: 0,
+      captured: false,
+      imagePath: null,
+    });
+
+    // --- 2. UPPER RING (Sky, +45° above horizon) - 6 dots every 60° ---
+    for (let i = 0; i < 6; i++) {
+      points.push({
+        id: id++,
+        pitch: 135, // 45° above horizon
+        yaw: i * 60,
+        captured: false,
+        imagePath: null,
+      });
+    }
+
+    // --- 3. CENTER RING (Horizon, eye level) - 8 dots every 45° ---
     for (let i = 0; i < 8; i++) {
       points.push({
         id: id++,
-        pitch: 90,
+        pitch: 90, // Horizon (phone upright)
         yaw: i * 45,
         captured: false,
-        imagePath: null as string | null,
+        imagePath: null,
       });
     }
 
-    // Top Ring (Sky) - 4 points (Every 90 deg)
-    for (let i = 0; i < 4; i++) {
+    // --- 4. LOWER RING (Ground, -45° below horizon) - 6 dots every 60° ---
+    for (let i = 0; i < 6; i++) {
       points.push({
         id: id++,
-        pitch: 135,
-        yaw: i * 90,
+        pitch: 45, // 45° below horizon
+        yaw: i * 60,
         captured: false,
-        imagePath: null as string | null,
+        imagePath: null,
       });
     }
 
-    // Bottom Ring (Ground) - 4 points (Every 90 deg)
-    for (let i = 0; i < 4; i++) {
-      points.push({
-        id: id++,
-        pitch: 45,
-        yaw: i * 90,
-        captured: false,
-        imagePath: null as string | null,
-      });
-    }
+    // --- 5. NADIR (Bottom/Ground Cap) - 1 dot straight down ---
+    points.push({
+      id: id++,
+      pitch: 0, // Straight down (90° below horizon)
+      yaw: 0,
+      captured: false,
+      imagePath: null,
+    });
 
     return points;
   };
@@ -194,7 +213,7 @@ const PhotosphereScreen = () => {
       {/* Progress HUD */}
       <View style={styles.hud}>
         <Text style={styles.hudText}>
-          {points.filter(p => p.captured).length} / 16
+          {points.filter(p => p.captured).length} / 22
         </Text>
       </View>
     </View>
