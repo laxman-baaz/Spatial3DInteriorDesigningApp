@@ -25,7 +25,6 @@ const PhotosphereScreen = () => {
   const {hasPermission, requestPermission} = useCameraPermission();
   const {reset, ...orientation} = useDeviceOrientation();
   const [isCapturing, setIsCapturing] = useState(false);
-  const [nextId, setNextId] = useState(1);
 
   // Target points generation
   const generatePoints = (): Array<{
@@ -95,23 +94,30 @@ const PhotosphereScreen = () => {
   const checkAlignment = async () => {
     if (isCapturing) return;
 
-    // Only check the next target point
-    const targetPoint = points.find(p => p.id === nextId);
-    if (!targetPoint) return; // Done?
+    // Check ALL uncaptured points - capture ANY aligned dot
+    const uncapturedPoints = points.filter(p => !p.captured);
+    
+    if (uncapturedPoints.length === 0) {
+      console.log('All dots captured! 🎉');
+      return;
+    }
 
-    const {x, y} = project3DTo2D(targetPoint, orientation, {
-      width,
-      height,
-      fovH: 60,
-      fovV: 45,
-    });
+    for (const point of uncapturedPoints) {
+      const {x, y} = project3DTo2D(point, orientation, {
+        width,
+        height,
+        fovH: 60,
+        fovV: 45,
+      });
 
-    const distFromCenter = Math.sqrt(
-      Math.pow(x - width / 2, 2) + Math.pow(y - height / 2, 2),
-    );
+      const distFromCenter = Math.sqrt(
+        Math.pow(x - width / 2, 2) + Math.pow(y - height / 2, 2),
+      );
 
-    if (distFromCenter < 20) {
-      await takePhoto(targetPoint.id);
+      if (distFromCenter < 20) {
+        await takePhoto(point.id);
+        break; // Capture one at a time
+      }
     }
   };
 
@@ -132,7 +138,6 @@ const PhotosphereScreen = () => {
               : p,
           ),
         );
-        setNextId(prev => prev + 1);
       } catch (e) {
         console.error('Capture failed', e);
       } finally {
@@ -184,8 +189,14 @@ const PhotosphereScreen = () => {
       <SphereOverlay
         orientation={orientation}
         points={points}
-        currentTargetId={nextId}
       />
+
+      {/* Progress HUD */}
+      <View style={styles.hud}>
+        <Text style={styles.hudText}>
+          {points.filter(p => p.captured).length} / 16
+        </Text>
+      </View>
     </View>
   );
 };
@@ -211,6 +222,20 @@ const styles = StyleSheet.create({
     height: CIRCLE_RADIUS * 2,
     borderRadius: CIRCLE_RADIUS,
     backgroundColor: 'transparent', // The mask is transparent, so content is hidden.
+  },
+  hud: {
+    position: 'absolute',
+    top: 60,
+    alignSelf: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 20,
+  },
+  hudText: {
+    color: 'white',
+    fontSize: 18,
+    fontWeight: 'bold',
   },
 });
 export default PhotosphereScreen;

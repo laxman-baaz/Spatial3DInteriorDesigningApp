@@ -19,7 +19,6 @@ interface Props {
   points: TargetPoint[];
   fovH?: number; // approx 60 degrees for most phones
   fovV?: number; // approx 45 degrees
-  currentTargetId?: number;
 }
 
 const SphereOverlay: React.FC<Props> = ({
@@ -27,7 +26,6 @@ const SphereOverlay: React.FC<Props> = ({
   points,
   fovH = 60,
   fovV = 45,
-  currentTargetId = 1,
 }) => {
   // Screen dimensions - using hardcoded for now, but should use hook
   const width = 360;
@@ -51,8 +49,8 @@ const SphereOverlay: React.FC<Props> = ({
         />
 
         {points.map(point => {
-          // Only show Current Active Target
-          if (point.id !== currentTargetId) return null;
+          // Skip captured dots
+          if (point.captured) return null;
 
           const {x, y, isVisible} = project3DTo2D(point, orientation, {
             width,
@@ -72,8 +70,8 @@ const SphereOverlay: React.FC<Props> = ({
           return (
             <G key={`dot-${point.id}`} x={x} y={y}>
               <Circle
-                r={isAligned ? '20' : '10'}
-                fill={isAligned ? 'rgba(255, 255, 255, 0.8)' : 'white'}
+                r={isAligned ? '20' : '12'}
+                fill={isAligned ? '#00FF00' : 'rgba(255, 255, 255, 0.8)'}
                 stroke="black"
                 strokeWidth="1"
                 opacity={0.9}
@@ -81,10 +79,10 @@ const SphereOverlay: React.FC<Props> = ({
               {isAligned && (
                 <Circle
                   r="25"
-                  stroke="white"
-                  strokeWidth="2"
+                  stroke="#00FF00"
+                  strokeWidth="3"
                   fill="none"
-                  opacity={0.5}
+                  opacity={0.6}
                 />
               )}
             </G>
