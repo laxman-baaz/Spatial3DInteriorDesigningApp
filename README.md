@@ -1,79 +1,197 @@
-This is a new [**React Native**](https://reactnative.dev) project, bootstrapped using [`@react-native-community/cli`](https://github.com/react-native-community/cli).
+# 3D Interior Designing App - Photo Sphere Capture
 
-# Getting Started
+A React Native mobile application that captures 360° photo spheres using ultra-wide camera and device sensors, for AI-powered 3D interior reconstruction.
 
->**Note**: Make sure you have completed the [React Native - Environment Setup](https://reactnative.dev/docs/environment-setup) instructions till "Creating a new application" step, before proceeding.
+## Features
 
-## Step 1: Start the Metro Server
+- 📷 **Ultra-Wide Camera Access**: Automatically uses ultra-wide lens if available
+- 🧭 **Device Orientation Tracking**: Real-time azimuth, pitch, and roll detection
+- 🎯 **Guided Photo Capture**: Visual guides help align device for optimal photo sphere coverage
+- 🤖 **Auto-Capture Mode**: Automatically captures photos when device is properly aligned
+- 📊 **Progress Tracking**: Visual feedback showing capture progress (16 photos)
+- 🔄 **Session Management**: Reset and restart capture sessions
 
-First, you will need to start **Metro**, the JavaScript _bundler_ that ships _with_ React Native.
+## Architecture
 
-To start Metro, run the following command from the _root_ of your React Native project:
-
-```bash
-# using npm
-npm start
-
-# OR using Yarn
-yarn start
+```
+Mobile [React Native App]
+    ↓
+Capture 16 Ultra-wide Photos
+  - react-native-vision-camera
+  - react-native-sensors
+  - axios
+  - @tanstack/react-query
+    ↓
+Upload to Backend (FastAPI / Node)
+  - PostgreSQL
+  - Redis
+  - AWS S3
+    ↓
+[Stitching Service]
+ - Python
+  - OpenCV
+  - Celery
+    ↓
+360° Equirectangular Panorama
+    ↓
+[AI Staging Engine]
+  - NanoBanana API
+    ↓
+New Staged 360° Image
+    ↓
+[3D Reconstruction Engine]
+  - WorldLabs API
+    ↓
+GLTF / 3D Scene Output
+    ↓
+[Storage]
+  - S3 + CloudFront
+    ↓
+Mobile Viewer
+  - react-three-fiber
+  - GLTFLoader
+  - Expo GL
 ```
 
-## Step 2: Start your Application
+## Prerequisites
 
-Let Metro Bundler run in its _own_ terminal. Open a _new_ terminal from the _root_ of your React Native project. Run the following command to start your _Android_ or _iOS_ app:
+- Node.js >= 18
+- React Native development environment set up
+  - For Android: Android Studio with SDK
+  - For iOS: Xcode (macOS only)
+- Physical device recommended (sensors work better on real devices)
 
-### For Android
+## Installation
 
+1. **Clone the repository**
 ```bash
-# using npm
+git clone <repository-url>
+cd InteriorDesigning3DApp
+```
+
+2. **Install dependencies**
+```bash
+npm install
+```
+
+3. **iOS Setup** (macOS only)
+```bash
+cd ios
+pod install
+cd ..
+```
+
+4. **Run the app**
+
+For Android:
+```bash
 npm run android
-
-# OR using Yarn
-yarn android
 ```
 
-### For iOS
-
+For iOS:
 ```bash
-# using npm
 npm run ios
-
-# OR using Yarn
-yarn ios
 ```
 
-If everything is set up _correctly_, you should see your new app running in your _Android Emulator_ or _iOS Simulator_ shortly provided you have set up your emulator/simulator correctly.
+## Photo Sphere Capture Guide
 
-This is one way to run your app — you can also run it directly from within Android Studio and Xcode respectively.
+The app captures 16 photos in a systematic pattern to create a complete 360° sphere:
 
-## Step 3: Modifying your App
+### Capture Pattern
+- **4 rows** at different elevation angles: 60°, 20°, -20°, -60°
+- **4 columns** at different azimuth angles: 0°, 90°, 180°, 270°
 
-Now that you have successfully run the app, let's modify it.
+### How to Capture
 
-1. Open `App.tsx` in your text editor of choice and edit some lines.
-2. For **Android**: Press the <kbd>R</kbd> key twice or select **"Reload"** from the **Developer Menu** (<kbd>Ctrl</kbd> + <kbd>M</kbd> (on Window and Linux) or <kbd>Cmd ⌘</kbd> + <kbd>M</kbd> (on macOS)) to see your changes!
+1. **Auto Mode (Recommended)**:
+   - The app automatically captures photos when you align your device
+   - Follow the on-screen guidance to move your device
+   - Green indicator shows when aligned
+   - Photo is captured automatically after 0.5s of stable alignment
 
-   For **iOS**: Hit <kbd>Cmd ⌘</kbd> + <kbd>R</kbd> in your iOS Simulator to reload the app and see your changes!
+2. **Manual Mode**:
+   - Tap "Manual" button to switch modes
+   - Align device with target position
+   - Tap capture button to take photo
 
-## Congratulations! :tada:
+3. **Best Practices**:
+   - Stand in the center of the room
+   - Keep steady when capturing
+   - Ensure good lighting
+   - Capture all 16 positions for best results
 
-You've successfully run and modified your React Native App. :partying_face:
+## Project Structure
 
-### Now what?
+```
+InteriorDesigning3DApp/
+├── src/
+│   ├── screens/
+│   │   └── CameraScreen.tsx       # Main camera interface
+│   ├── hooks/
+│   │   ├── useCameraPermissions.ts # Camera permission management
+│   │   └── useDeviceOrientation.ts # Sensor-based orientation tracking
+│   ├── types/
+│   │   └── index.ts                # TypeScript type definitions
+│   └── utils/
+│       └── photoSphereHelper.ts    # Photo sphere calculation utilities
+├── android/                         # Android native code
+├── ios/                            # iOS native code
+└── App.tsx                         # App entry point
+```
 
-- If you want to add this new React Native code to an existing application, check out the [Integration guide](https://reactnative.dev/docs/integration-with-existing-apps).
-- If you're curious to learn more about React Native, check out the [Introduction to React Native](https://reactnative.dev/docs/getting-started).
+## Key Dependencies
 
-# Troubleshooting
+- **react-native-vision-camera**: High-performance camera library with ultra-wide support
+- **react-native-sensors**: Access to device accelerometer, gyroscope, and magnetometer
+- **@tanstack/react-query**: Powerful data fetching and state management
+- **axios**: HTTP client for API communication
 
-If you can't get this to work, see the [Troubleshooting](https://reactnative.dev/docs/troubleshooting) page.
+## Permissions
 
-# Learn More
+### Android
+- `CAMERA`: Capture photos
+- `RECORD_AUDIO`: Required by vision-camera (not used for audio)
+- `WRITE_EXTERNAL_STORAGE`: Save photos
+- `READ_EXTERNAL_STORAGE`: Access saved photos
 
-To learn more about React Native, take a look at the following resources:
+### iOS
+- `NSCameraUsageDescription`: Capture photos
+- `NSMicrophoneUsageDescription`: Required by vision-camera
+- `NSMotionUsageDescription`: Track device orientation
+- `NSPhotoLibraryUsageDescription`: Access photo library
+- `NSPhotoLibraryAddUsageDescription`: Save photos
 
-- [React Native Website](https://reactnative.dev) - learn more about React Native.
-- [Getting Started](https://reactnative.dev/docs/environment-setup) - an **overview** of React Native and how setup your environment.
-- [Learn the Basics](https://reactnative.dev/docs/getting-started) - a **guided tour** of the React Native **basics**.
-- [Blog](https://reactnative.dev/blog) - read the latest official React Native **Blog** posts.
-- [`@facebook/react-native`](https://github.com/facebook/react-native) - the Open Source; GitHub **repository** for React Native.
+## Next Steps
+
+1. **Backend Integration**: Connect to FastAPI/Node backend for photo upload
+2. **Photo Stitching**: Implement or integrate with stitching service
+3. **AI Staging**: Integration with NanoBanana API
+4. **3D Reconstruction**: Integration with WorldLabs API
+5. **3D Viewer**: Implement GLTF viewer with react-three-fiber
+
+## Troubleshooting
+
+### Camera not working
+- Ensure permissions are granted in device settings
+- Restart the app after granting permissions
+- Try on a physical device (simulator has limited camera support)
+
+### Sensor data inaccurate
+- Calibrate device compass (figure-8 motion)
+- Sensors work better on physical devices
+- Ensure device is not near magnetic interference
+
+### Build errors
+- Run `npm install` again
+- For iOS: `cd ios && pod install && cd ..`
+- Clean build: 
+  - Android: `cd android && ./gradlew clean && cd ..`
+  - iOS: Clean build folder in Xcode
+
+## Contributing
+
+Contributions are welcome! Please follow the existing code style and add tests for new features.
+
+## License
+
+[Add your license here]
