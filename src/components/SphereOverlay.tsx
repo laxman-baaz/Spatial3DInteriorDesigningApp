@@ -1,76 +1,98 @@
-import React from 'react';
-import {View, StyleSheet, Dimensions} from 'react-native';
-import Svg, {Circle, G, Text as SvgText} from 'react-native-svg';
-import {SpherePoint, projectToScreen} from '../utils/SphereMath';
+import React, {useMemo} from 'react';
+import {StyleSheet, View} from 'react-native';
+import Svg, {Circle, G, Path, Text as SvgText} from 'react-native-svg';
+import Animated, {useAnimatedProps} from 'react-native-reanimated';
+import {project3DTo2D} from '../utils/projection';
 
-const {width, height} = Dimensions.get('window');
+const AnimatedCircle = Animated.createAnimatedComponent(Circle);
+const AnimatedG = Animated.createAnimatedComponent(G);
 
-interface Props {
-  orientation: {pitch: number; yaw: number};
-  points: SpherePoint[];
+interface TargetPoint {
+  id: number;
+  pitch: number; // in degrees
+  yaw: number; // in degrees
+  captured: boolean;
 }
 
-const SphereOverlay: React.FC<Props> = ({orientation, points}) => {
+interface Props {
+  orientation: {pitch: number; yaw: number; roll: number};
+  points: TargetPoint[];
+  fovH?: number; // approx 60 degrees for most phones
+  fovV?: number; // approx 45 degrees
+  currentTargetId?: number;
+}
+
+const SphereOverlay: React.FC<Props> = ({
+  orientation,
+  points,
+  fovH = 60,
+  fovV = 45,
+  currentTargetId = 1,
+}) => {
+  // Screen dimensions - using hardcoded for now, but should use hook
+  const width = 360;
+  const height = 640;
   const cx = width / 2;
   const cy = height / 2;
-
-  // Center target radius matches the capture zone
-  const TARGET_RADIUS = 120;
+  const r = 120; // Radius of the cutout
 
   return (
     <View style={StyleSheet.absoluteFill} pointerEvents="none">
-      <Svg height="100%" width="100%">
-        {/* Static Center Target */}
+      <Svg height="100%" width="100%" viewBox={`0 0 ${width} ${height}`}>
+        {/* Viewfinder Border */}
         <Circle
           cx={cx}
           cy={cy}
-          r={TARGET_RADIUS}
+          r={r}
           stroke="white"
           strokeWidth="2"
-          strokeDasharray="10, 5"
           fill="none"
-          opacity={0.5}
+          opacity={0.8}
         />
-        {/* Center Crosshair dot */}
-        <Circle cx={cx} cy={cy} r="4" fill="cyan" />
 
-        {/* Floating AR Dots */}
         {points.map(point => {
-          if (point.isCaptured) return null;
+          // Only show Current Active Target
+          if (point.id !== currentTargetId) return null;
 
-          // 1. PROJECT
-          const {x, y, isVisible} = projectToScreen(
-            orientation.pitch,
-            orientation.yaw,
-            point.targetPitch,
-            point.targetYaw,
-          );
+          const {x, y, isVisible} = project3DTo2D(point, orientation, {
+            width,
+            height,
+            fovH,
+            fovV,
+          });
 
-          // 2. RENDER IF VISIBLE
           if (!isVisible) return null;
 
+          // Calculate distance from center for alignment check
+          const distFromCenter = Math.sqrt(
+            Math.pow(x - cx, 2) + Math.pow(y - cy, 2),
+          );
+          const isAligned = distFromCenter < 30; // 30px threshold
+
           return (
-            <G key={point.id}>
+            <G key={`dot-${point.id}`} x={x} y={y}>
               <Circle
-                cx={x}
-                cy={y}
-                r="15"
-                fill="rgba(255, 255, 255, 0.6)"
-                stroke="white"
-                strokeWidth="2"
+                r={isAligned ? '20' : '10'}
+                fill={isAligned ? 'rgba(255, 255, 255, 0.8)' : 'white'}
+                stroke="black"
+                strokeWidth="1"
+                opacity={0.9}
               />
-              <SvgText
-                x={x}
-                y={y + 4} // Centers vertically roughly
-                fill="black"
-                fontSize="10"
-                fontWeight="bold"
-                textAnchor="middle">
-                {point.id}
-              </SvgText>
+              {isAligned && (
+                <Circle
+                  r="25"
+                  stroke="white"
+                  strokeWidth="2"
+                  fill="none"
+                  opacity={0.5}
+                />
+              )}
             </G>
           );
         })}
+
+        {/* Center Guide (Reticle) */}
+        <Circle cx={cx} cy={cy} r="4" fill="cyan" />
       </Svg>
     </View>
   );
