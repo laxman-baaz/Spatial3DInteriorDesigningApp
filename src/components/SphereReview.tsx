@@ -17,10 +17,9 @@ interface Props {
 
 const {width, height} = Dimensions.get('window');
 
-// Size of the photo tile on screen (Adjust to match FOV roughly)
-// Using larger tiles for better visibility - covering more screen area
-// Increased from 300px to match device screen better
-const PHOTO_SIZE = width * 0.8; // 80% of screen width
+// Tile dimensions at 50% scale, keeping the camera's 4:3 FOV ratio (H=60°, V=45°)
+const TILE_H = height * 0.9;
+const TILE_W = TILE_H * (60 / 100); // width : height = fovH : fovV
 
 const SphereReview: React.FC<Props> = ({points, orientation}) => {
   return (
@@ -31,30 +30,26 @@ const SphereReview: React.FC<Props> = ({points, orientation}) => {
       {points.map(point => {
         if (!point.captured || !point.imagePath) return null;
 
-        const {x, y, isVisible} = project3DTo2D(point, orientation, {
+        const {x, y} = project3DTo2D(point, orientation, {
           width,
           height,
           fovH: 60,
           fovV: 45,
         });
 
-        // Optimization: Don't render if it's way off screen
-        if (!isVisible) return null;
+        // Keep the tile as long as ANY part of it overlaps the screen
+        const left = x - TILE_W / 2;
+        const top = y - TILE_H / 2;
+        const tileRight = left + TILE_W;
+        const tileBottom = top + TILE_H;
+        const onScreen =
+          tileRight > 0 && left < width && tileBottom > 0 && top < height;
+        if (!onScreen) return null;
 
         return (
           <View
             key={`photo-${point.id}`}
-            style={[
-              styles.photoTile,
-              {
-                left: x - PHOTO_SIZE / 2, // Center the image based on projected x
-                top: y - PHOTO_SIZE / 2, // Center y
-                transform: [
-                  // Optional: Add slight scaling/rotation based on perspective if we had matrices
-                  {scale: 1},
-                ],
-              },
-            ]}>
+            style={[styles.photoTile, {left, top}]}>
             <Image
               source={{uri: point.imagePath}}
               style={StyleSheet.absoluteFill}
@@ -74,12 +69,12 @@ const styles = StyleSheet.create({
   },
   photoTile: {
     position: 'absolute',
-    width: PHOTO_SIZE,
-    height: PHOTO_SIZE,
+    width: TILE_W,
+    height: TILE_H,
     overflow: 'hidden',
     borderWidth: 1,
     borderColor: '#fff',
-    backgroundColor: '#000', // Better backing
+    backgroundColor: '#000',
   },
   image: {
     width: '100%',

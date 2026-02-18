@@ -28,14 +28,16 @@ export const project3DTo2D = (
   const currentPitchDeg = current.pitch * (180 / Math.PI);
   const currentYawDeg = current.yaw * (180 / Math.PI);
 
-  // 2. Calculate Difference (INVERTED for natural movement)
-  // When you turn RIGHT, you should see things on the RIGHT
-  let diffYaw = currentYawDeg - target.yaw;
+  // 2. Normalise current yaw to 0..360 so multi-rotation accumulation doesn't break wrapping
+  const normCurrentYaw = ((currentYawDeg % 360) + 360) % 360;
+  const normTargetYaw  = ((target.yaw      % 360) + 360) % 360;
+
+  // 3. Calculate Difference – shortest path on the circle
+  let diffYaw   = normCurrentYaw - normTargetYaw;
   let diffPitch = target.pitch - currentPitchDeg;
 
-  // 3. Handle Wrap-Around (Shortest Path)
-  // e.g. If target is 350° and current is 10°, diff is 340° (Wrong). Should be -20°.
-  if (diffYaw > 180) diffYaw -= 360;
+  // Wrap yaw to (-180, 180] so the dot always takes the shortest route
+  if (diffYaw >  180) diffYaw -= 360;
   if (diffYaw < -180) diffYaw += 360;
 
   // 4. Check Visibility (Is it inside the camera view?)

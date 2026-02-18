@@ -64,7 +64,8 @@ const PhotosphereScreen = () => {
   const [points, setPoints] = useState(generatePoints());
   const [isStitching, setIsStitching] = useState(false);
   const capturedCount = points.filter(p => p.captured).length;
-  const allCaptured = capturedCount === 32;
+  const totalDots = TARGET_DOTS.length; // 22 (or 32 when switched)
+  const allCaptured = capturedCount === totalDots;
   const hasLoggedAllCaptured = React.useRef(false);
 
   // Reset orientation on mount to establishing "Zero"
@@ -246,7 +247,7 @@ const PhotosphereScreen = () => {
 
       {/* Progress HUD */}
       <View style={styles.hud}>
-        <Text style={styles.hudText}>{capturedCount} / 32</Text>
+        <Text style={styles.hudText}>{capturedCount} / {totalDots}</Text>
       </View>
 
       {/* Create panorama — always visible; uses all captured images (1–32) */}
