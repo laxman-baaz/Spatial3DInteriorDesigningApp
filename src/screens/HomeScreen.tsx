@@ -1,4 +1,4 @@
-import React, {useState} from 'react';
+import React, {useState, useCallback} from 'react';
 import {
   StyleSheet,
   View,
@@ -7,31 +7,39 @@ import {
   FlatList,
   StatusBar,
   Dimensions,
+  Image,
 } from 'react-native';
 import {SafeAreaView} from 'react-native-safe-area-context';
+import {useFocusEffect} from '@react-navigation/native';
 import Icon from 'react-native-vector-icons/Ionicons';
-
-interface ScanItem {
-  id: string;
-  title: string;
-  date: string;
-}
-
-const MOCK_SCANS: ScanItem[] = [
-  {id: '1', title: 'Living Room', date: 'Oct 24, 2023'},
-  {id: '2', title: 'Bedroom', date: 'Oct 23, 2023'},
-  {id: '3', title: 'Kitchen', date: 'Oct 20, 2023'},
-];
+import {loadPanoramas, type PanoramaItem} from '../services/panoramaStorage';
 
 const {width} = Dimensions.get('window');
 
 export default function HomeScreen({navigation}: any) {
-  const [scans, setScans] = useState<ScanItem[]>(MOCK_SCANS);
+  const [scans, setScans] = useState<PanoramaItem[]>([]);
 
-  const renderScanItem = ({item}: {item: ScanItem}) => (
+  useFocusEffect(
+    useCallback(() => {
+      loadPanoramas().then((list) => {
+        console.log('[HomeScreen] loadPanoramas: got', list.length, 'item(s)');
+        setScans(list);
+      });
+    }, [])
+  );
+
+  const renderScanItem = ({item}: {item: PanoramaItem}) => (
     <TouchableOpacity style={styles.scanItem}>
       <View style={styles.scanThumbnail}>
-        <Icon name="image-outline" size={24} color="#888" />
+        {item.imageUri ? (
+          <Image
+            source={{uri: item.imageUri}}
+            style={styles.scanThumbnailImage}
+            resizeMode="cover"
+          />
+        ) : (
+          <Icon name="image-outline" size={24} color="#888" />
+        )}
       </View>
       <View style={styles.scanInfo}>
         <Text style={styles.scanTitle}>{item.title}</Text>
@@ -225,6 +233,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 16,
+    overflow: 'hidden',
+  },
+  scanThumbnailImage: {
+    width: 48,
+    height: 48,
   },
   scanInfo: {
     flex: 1,

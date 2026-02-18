@@ -1,4 +1,4 @@
-import React, {useState} from 'react';
+import React, {useState, useCallback} from 'react';
 import {
   StyleSheet,
   View,
@@ -7,36 +7,42 @@ import {
   TouchableOpacity,
   Dimensions,
   StatusBar,
+  Image,
 } from 'react-native';
 import {SafeAreaView} from 'react-native-safe-area-context';
+import {useFocusEffect} from '@react-navigation/native';
 import Icon from 'react-native-vector-icons/Ionicons';
+import {loadPanoramas, type PanoramaItem} from '../services/panoramaStorage';
 
 const {width} = Dimensions.get('window');
-const COLUMN_COUNT = 2;
-const ITEM_WIDTH = (width - 40 - (COLUMN_COUNT - 1) * 15) / COLUMN_COUNT;
-
-interface ModelItem {
-  id: string;
-  title: string;
-  date: string;
-  thumbnail?: any;
-}
-
-// Mock data (same as Home but for gallery view)
-const MOCK_MODELS: ModelItem[] = [
-  {id: '1', title: 'Living Room', date: 'Oct 24, 2023'},
-  {id: '2', title: 'Bedroom', date: 'Oct 23, 2023'},
-  {id: '3', title: 'Kitchen', date: 'Oct 20, 2023'},
-  {id: '4', title: 'Office', date: 'Oct 18, 2023'},
-];
+const HORIZONTAL_PADDING = 20;
+const CARD_WIDTH = width - HORIZONTAL_PADDING * 2;
+const THUMBNAIL_HEIGHT = CARD_WIDTH * 0.5;
 
 export default function ThreeDScreen() {
-  const [models, setModels] = useState<ModelItem[]>(MOCK_MODELS);
+  const [models, setModels] = useState<PanoramaItem[]>([]);
 
-  const renderModelItem = ({item}: {item: ModelItem}) => (
+  useFocusEffect(
+    useCallback(() => {
+      loadPanoramas().then(list => {
+        console.log('[3D Gallery] loadPanoramas: got', list.length, 'item(s)');
+        setModels(list);
+      });
+    }, []),
+  );
+
+  const renderModelItem = ({item}: {item: PanoramaItem}) => (
     <TouchableOpacity style={styles.modelCard} activeOpacity={0.8}>
       <View style={styles.modelThumbnail}>
-        <Icon name="cube-outline" size={40} color="#6200ee" />
+        {item.imageUri ? (
+          <Image
+            source={{uri: item.imageUri}}
+            style={styles.modelThumbnailImage}
+            resizeMode="cover"
+          />
+        ) : (
+          <Icon name="cube-outline" size={40} color="#6200ee" />
+        )}
       </View>
       <View style={styles.modelInfo}>
         <Text style={styles.modelTitle} numberOfLines={1}>
@@ -69,15 +75,13 @@ export default function ThreeDScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Models Grid */}
+      {/* Models list - full width cards */}
       <FlatList
         data={models}
         renderItem={renderModelItem}
         keyExtractor={item => item.id}
-        numColumns={COLUMN_COUNT}
         ListEmptyComponent={EmptyState}
-        contentContainerStyle={styles.gridContent}
-        columnWrapperStyle={styles.columnWrapper}
+        contentContainerStyle={styles.listContent}
         showsVerticalScrollIndicator={false}
       />
     </SafeAreaView>
@@ -105,15 +109,12 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#333',
   },
-  gridContent: {
-    padding: 20,
-  },
-  columnWrapper: {
-    justifyContent: 'space-between',
-    marginBottom: 15,
+  listContent: {
+    padding: HORIZONTAL_PADDING,
+    paddingBottom: 24,
   },
   modelCard: {
-    width: ITEM_WIDTH,
+    width: CARD_WIDTH,
     backgroundColor: '#fff',
     borderRadius: 12,
     overflow: 'hidden',
@@ -122,12 +123,19 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 3,
+    marginBottom: 16,
   },
   modelThumbnail: {
-    height: ITEM_WIDTH, // Square thumbnail
+    width: CARD_WIDTH,
+    height: THUMBNAIL_HEIGHT,
     backgroundColor: '#f0f0ff',
     justifyContent: 'center',
     alignItems: 'center',
+    overflow: 'hidden',
+  },
+  modelThumbnailImage: {
+    width: CARD_WIDTH,
+    height: THUMBNAIL_HEIGHT,
   },
   modelInfo: {
     padding: 12,

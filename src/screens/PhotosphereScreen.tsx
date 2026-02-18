@@ -1,5 +1,13 @@
 import React, {useState, useEffect} from 'react';
-import {View, StyleSheet, Text, Dimensions} from 'react-native';
+import {
+  View,
+  StyleSheet,
+  Text,
+  Dimensions,
+  TouchableOpacity,
+  Alert,
+  ActivityIndicator,
+} from 'react-native';
 import {
   Camera,
   useCameraDevice,
@@ -12,6 +20,11 @@ import SphereReview from '../components/SphereReview';
 import MaskedView from '@react-native-masked-view/masked-view';
 import {project3DTo2D} from '../utils/projection';
 import {TARGET_DOTS} from '../sphereConfig';
+import {stitchPanoramaViaApi} from '../services/stitching/stitchApi';
+import {
+  savePanorama,
+  dataUrlToBase64,
+} from '../services/panoramaStorage';
 
 const {width, height} = Dimensions.get('window');
 const CIRCLE_RADIUS = 120;
@@ -49,6 +62,10 @@ const PhotosphereScreen = () => {
   };
 
   const [points, setPoints] = useState(generatePoints());
+  const [isStitching, setIsStitching] = useState(false);
+  const capturedCount = points.filter(p => p.captured).length;
+  const allCaptured = capturedCount === 32;
+  const hasLoggedAllCaptured = React.useRef(false);
 
   // Reset orientation on mount to establishing "Zero"
   useEffect(() => {
@@ -64,11 +81,15 @@ const PhotosphereScreen = () => {
 
     // Check ALL uncaptured points - capture ANY aligned dot
     const uncapturedPoints = points.filter(p => !p.captured);
-    
+
     if (uncapturedPoints.length === 0) {
-      console.log('All dots captured! 🎉');
+      if (!hasLoggedAllCaptured.current) {
+        hasLoggedAllCaptured.current = true;
+        console.log('All dots captured! 🎉');
+      }
       return;
     }
+    hasLoggedAllCaptured.current = false;
 
     const cx = width / 2;
     const cy = height / 2;
@@ -119,6 +140,65 @@ const PhotosphereScreen = () => {
     }
   }, [hasPermission]);
 
+  const handleStitch = async () => {
+    if (isStitching) return;
+    const withPaths = points.filter(p => p.captured && p.imagePath);
+    if (withPaths.length === 0) {
+      Alert.alert('No images', 'Capture at least one dot to create a panorama.');
+      return;
+    }
+    console.log('[Photosphere] Stitch: sending', withPaths.length, 'images to API');
+    setIsStitching(true);
+    try {
+      const result = await stitchPanoramaViaApi(
+        withPaths.map(p => ({
+          path: p.imagePath!,
+          pitch: p.pitch,
+          yaw: p.yaw,
+        })),
+        { outputWidth: 4096 }
+      );
+      console.log('[Photosphere] Stitch result:', {
+        success: result.success,
+        panoramaId: result.panoramaId,
+        hasImageData: !!result.imageData,
+        imageDataLength: result.imageData?.length ?? 0,
+        error: result.error,
+      });
+      if (result.success) {
+        const id = result.panoramaId ?? `pano_${Date.now()}`;
+        const base64 = result.imageData ? dataUrlToBase64(result.imageData) : null;
+        if (base64) {
+          console.log('[Photosphere] Saving panorama locally, id=', id, 'base64Len=', base64.length);
+          await savePanorama(id, base64);
+          console.log('[Photosphere] Panorama saved to storage');
+        } else {
+          console.log('[Photosphere] No base64 from API - not saving locally');
+        }
+        const time =
+          result.durationMs != null
+            ? ` (${Math.round(result.durationMs / 1000)}s)`
+            : '';
+        Alert.alert(
+          'Panorama ready',
+          base64
+            ? `Saved to Recent Projects & 3D Gallery.${time}`
+            : `Stitched successfully.${time}${result.panoramaId ? `\nID: ${result.panoramaId}` : ''}`
+        );
+      } else {
+        Alert.alert('Stitching failed', result.error ?? 'Unknown error');
+      }
+    } catch (e) {
+      console.error('[Photosphere] Stitch error:', e);
+      Alert.alert(
+        'Stitching failed',
+        e instanceof Error ? e.message : String(e)
+      );
+    } finally {
+      setIsStitching(false);
+    }
+  };
+
   if (!device || !hasPermission)
     return (
       <View style={styles.container}>
@@ -166,10 +246,26 @@ const PhotosphereScreen = () => {
 
       {/* Progress HUD */}
       <View style={styles.hud}>
-        <Text style={styles.hudText}>
-          {points.filter(p => p.captured).length} / 32
-        </Text>
+        <Text style={styles.hudText}>{capturedCount} / 32</Text>
       </View>
+
+      {/* Create panorama — always visible; uses all captured images (1–32) */}
+      <TouchableOpacity
+        style={[
+          styles.stitchButton,
+          (isStitching || capturedCount === 0) && styles.stitchButtonDisabled,
+        ]}
+        onPress={handleStitch}
+        disabled={isStitching || capturedCount === 0}
+        activeOpacity={0.8}>
+        {isStitching ? (
+          <ActivityIndicator color="#fff" size="small" />
+        ) : (
+          <Text style={styles.stitchButtonText}>
+            Create panorama {capturedCount > 0 ? `(${capturedCount})` : ''}
+          </Text>
+        )}
+      </TouchableOpacity>
     </View>
   );
 };
@@ -209,6 +305,25 @@ const styles = StyleSheet.create({
     color: 'white',
     fontSize: 18,
     fontWeight: 'bold',
+  },
+  stitchButton: {
+    position: 'absolute',
+    bottom: 48,
+    alignSelf: 'center',
+    backgroundColor: 'rgba(0, 150, 255, 0.9)',
+    paddingHorizontal: 24,
+    paddingVertical: 14,
+    borderRadius: 24,
+    minWidth: 160,
+    alignItems: 'center',
+  },
+  stitchButtonDisabled: {
+    opacity: 0.8,
+  },
+  stitchButtonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '600',
   },
 });
 export default PhotosphereScreen;
