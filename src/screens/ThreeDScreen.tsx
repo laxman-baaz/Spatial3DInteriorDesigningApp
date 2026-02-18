@@ -14,6 +14,7 @@ import {
   Alert,
   KeyboardAvoidingView,
   Platform,
+  ScrollView,
 } from 'react-native';
 import {SafeAreaView} from 'react-native-safe-area-context';
 import {useFocusEffect} from '@react-navigation/native';
@@ -33,11 +34,30 @@ const THUMBNAIL_HEIGHT = CARD_WIDTH * 0.5;
 const DEFAULT_PROMPT =
   'Modern interior design with warm lighting, elegant furniture, and natural materials';
 
+// Preset prompt chips – tap to fill the prompt field instantly
+const PRESET_PROMPTS = [
+  'Modern minimalist living room, neutral tones, natural light',
+  'Scandinavian bedroom, white walls, oak floors, soft linen',
+  'Luxury hotel suite, marble floors, golden accents, dim mood lighting',
+  'Industrial loft, exposed brick, metal beams, Edison bulbs',
+  'Cozy bohemian studio, warm earthy palette, lots of plants',
+  'Japandi kitchen, clean lines, warm wood, muted ceramics',
+];
+
+// Defined OUTSIDE ThreeDScreen so its reference never changes between renders
+const EmptyState = () => (
+  <View style={styles.emptyState}>
+    <Icon name="cube-outline" size={60} color="#ddd" />
+    <Text style={styles.emptyText}>No panoramas yet</Text>
+    <Text style={styles.emptySubtext}>
+      Capture and stitch a photosphere to get started
+    </Text>
+  </View>
+);
+
 export default function ThreeDScreen() {
   const [models, setModels] = useState<PanoramaItem[]>([]);
-
-  // Staging state
-  const [stagingId, setStagingId] = useState<string | null>(null); // which card is processing
+  const [stagingId, setStagingId] = useState<string | null>(null);
   const [modalPanorama, setModalPanorama] = useState<PanoramaItem | null>(null);
   const [prompt, setPrompt] = useState(DEFAULT_PROMPT);
 
@@ -50,172 +70,107 @@ export default function ThreeDScreen() {
     }, []),
   );
 
-  // ── AI staging ────────────────────────────────────────────────────────────
-  const handleOpenStageModal = (item: PanoramaItem) => {
+  // ── Handlers ──────────────────────────────────────────────────────────────
+  const handleOpenStageModal = useCallback((item: PanoramaItem) => {
     setPrompt(DEFAULT_PROMPT);
     setModalPanorama(item);
-  };
+  }, []);
 
-  const handleStage = async () => {
+  const handleCloseModal = useCallback(() => setModalPanorama(null), []);
+
+  const handleStage = useCallback(async () => {
     if (!modalPanorama) return;
     const pano = modalPanorama;
-    setModalPanorama(null); // close modal
+    setModalPanorama(null);
     setStagingId(pano.id);
-    console.log(`[3D Gallery] staging panorama id=${pano.id} prompt="${prompt}"`);
+    console.log(`[3D Gallery] staging id=${pano.id} prompt="${prompt}"`);
 
     try {
       const {stagedBase64, stagedId} = await stageWithAI(pano.imageUri, prompt);
       console.log(`[3D Gallery] staging done stagedId=${stagedId}`);
-
       await saveStaged(pano.id, stagedBase64);
-
-      // Refresh list so the staged thumbnail shows immediately
       const updated = await loadPanoramas();
       setModels(updated);
-
       Alert.alert('AI Staging complete', 'Your staged panorama is ready!');
     } catch (e: any) {
       console.error('[3D Gallery] staging error:', e);
       Alert.alert(
         'Staging failed',
-        e?.message ?? 'Unknown error. Check that the backend is running and API keys are set.',
+        e?.message ?? 'Unknown error. Check the backend is running and API keys are set.',
       );
     } finally {
       setStagingId(null);
     }
-  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modalPanorama, prompt]);
 
   // ── Card renderer ─────────────────────────────────────────────────────────
-  const renderModelItem = ({item}: {item: PanoramaItem}) => {
-    const isStaging = stagingId === item.id;
-    // Prefer staged image if available
-    const displayUri = item.stagedImageUri ?? item.imageUri;
+  const renderModelItem = useCallback(
+    ({item}: {item: PanoramaItem}) => {
+      const isStaging = stagingId === item.id;
+      const displayUri = item.stagedImageUri ?? item.imageUri;
 
-    return (
-      <View style={styles.modelCard}>
-        {/* Thumbnail – shows staged image if ready, original otherwise */}
-        <View style={styles.modelThumbnail}>
-          {displayUri ? (
-            <Image
-              source={{uri: displayUri}}
-              style={styles.modelThumbnailImage}
-              resizeMode="cover"
-            />
-          ) : (
-            <Icon name="cube-outline" size={40} color="#6200ee" />
-          )}
-
-          {/* "AI Staged" badge */}
-          {item.stagedImageUri && (
-            <View style={styles.stagedBadge}>
-              <Text style={styles.stagedBadgeText}>AI Staged</Text>
-            </View>
-          )}
-        </View>
-
-        {/* Info row */}
-        <View style={styles.modelInfo}>
-          <View style={styles.modelInfoText}>
-            <Text style={styles.modelTitle} numberOfLines={1}>
-              {item.title}
-            </Text>
-            <Text style={styles.modelDate}>{item.date}</Text>
+      return (
+        <View style={styles.modelCard}>
+          <View style={styles.modelThumbnail}>
+            {displayUri ? (
+              <Image
+                source={{uri: displayUri}}
+                style={styles.modelThumbnailImage}
+                resizeMode="cover"
+              />
+            ) : (
+              <Icon name="cube-outline" size={40} color="#6200ee" />
+            )}
+            {item.stagedImageUri && (
+              <View style={styles.stagedBadge}>
+                <Text style={styles.stagedBadgeText}>AI Staged</Text>
+              </View>
+            )}
           </View>
 
-          {/* AI Stage button */}
-          {isStaging ? (
-            <View style={styles.stagingIndicator}>
-              <ActivityIndicator size="small" color="#6200ee" />
-              <Text style={styles.stagingText}>Staging…</Text>
-            </View>
-          ) : (
-            <TouchableOpacity
-              style={styles.stageButton}
-              onPress={() => handleOpenStageModal(item)}
-              activeOpacity={0.7}>
-              <Icon name="color-wand-outline" size={16} color="#fff" />
-              <Text style={styles.stageButtonText}>
-                {item.stagedImageUri ? 'Re-stage' : 'AI Stage'}
+          <View style={styles.modelInfo}>
+            <View style={styles.modelInfoText}>
+              <Text style={styles.modelTitle} numberOfLines={1}>
+                {item.title}
               </Text>
+              <Text style={styles.modelDate}>{item.date}</Text>
+            </View>
+
+            {isStaging ? (
+              <View style={styles.stagingIndicator}>
+                <ActivityIndicator size="small" color="#6200ee" />
+                <Text style={styles.stagingText}>Staging…</Text>
+              </View>
+            ) : (
+              <TouchableOpacity
+                style={styles.stageButton}
+                onPress={() => handleOpenStageModal(item)}
+                activeOpacity={0.7}>
+                <Icon name="color-wand-outline" size={16} color="#fff" />
+                <Text style={styles.stageButtonText}>
+                  {item.stagedImageUri ? 'Re-stage' : 'AI Stage'}
+                </Text>
+              </TouchableOpacity>
+            )}
+          </View>
+
+          {item.stagedImageUri && (
+            <TouchableOpacity
+              style={styles.viewOriginalBtn}
+              onPress={() =>
+                Alert.alert(
+                  'Image info',
+                  `Original: ${item.imageUri}\n\nStaged: ${item.stagedImageUri}`,
+                )
+              }>
+              <Text style={styles.viewOriginalText}>View file paths</Text>
             </TouchableOpacity>
           )}
         </View>
-
-        {/* Original / staged toggle hint */}
-        {item.stagedImageUri && (
-          <TouchableOpacity
-            style={styles.viewOriginalBtn}
-            onPress={() =>
-              Alert.alert(
-                'Image info',
-                `Original: ${item.imageUri}\n\nStaged: ${item.stagedImageUri}`,
-              )
-            }>
-            <Text style={styles.viewOriginalText}>View file paths</Text>
-          </TouchableOpacity>
-        )}
-      </View>
-    );
-  };
-
-  const EmptyState = () => (
-    <View style={styles.emptyState}>
-      <Icon name="cube-outline" size={60} color="#ddd" />
-      <Text style={styles.emptyText}>No panoramas yet</Text>
-      <Text style={styles.emptySubtext}>
-        Capture and stitch a photosphere to get started
-      </Text>
-    </View>
-  );
-
-  // ── Prompt modal ──────────────────────────────────────────────────────────
-  const StageModal = () => (
-    <Modal
-      visible={!!modalPanorama}
-      transparent
-      animationType="slide"
-      onRequestClose={() => setModalPanorama(null)}>
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={styles.modalOverlay}>
-        <View style={styles.modalSheet}>
-          <View style={styles.modalHeader}>
-            <Icon name="color-wand-outline" size={22} color="#6200ee" />
-            <Text style={styles.modalTitle}>AI Interior Staging</Text>
-            <TouchableOpacity onPress={() => setModalPanorama(null)}>
-              <Icon name="close" size={22} color="#333" />
-            </TouchableOpacity>
-          </View>
-
-          <Text style={styles.modalLabel}>Staging prompt</Text>
-          <TextInput
-            style={styles.promptInput}
-            value={prompt}
-            onChangeText={setPrompt}
-            multiline
-            numberOfLines={4}
-            placeholder="Describe the interior style…"
-            placeholderTextColor="#aaa"
-          />
-
-          <Text style={styles.modalHint}>
-            Tip: be specific — "Scandinavian bedroom, white walls, oak floors,
-            soft linen bedding, morning light"
-          </Text>
-
-          <TouchableOpacity
-            style={[
-              styles.submitButton,
-              !prompt.trim() && styles.submitButtonDisabled,
-            ]}
-            onPress={handleStage}
-            disabled={!prompt.trim()}>
-            <Icon name="sparkles-outline" size={18} color="#fff" />
-            <Text style={styles.submitButtonText}>Stage with NanoBanana AI</Text>
-          </TouchableOpacity>
-        </View>
-      </KeyboardAvoidingView>
-    </Modal>
+      );
+    },
+    [stagingId, handleOpenStageModal],
   );
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -239,7 +194,85 @@ export default function ThreeDScreen() {
         showsVerticalScrollIndicator={false}
       />
 
-      <StageModal />
+      {/* ── Stage modal – inlined so it's never remounted on re-render ── */}
+      <Modal
+        visible={!!modalPanorama}
+        transparent
+        animationType="slide"
+        onRequestClose={handleCloseModal}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={styles.modalOverlay}>
+          <View style={styles.modalSheet}>
+            {/* Header */}
+            <View style={styles.modalHeader}>
+              <Icon name="color-wand-outline" size={22} color="#6200ee" />
+              <Text style={styles.modalTitle}>AI Interior Staging</Text>
+              <TouchableOpacity onPress={handleCloseModal}>
+                <Icon name="close" size={22} color="#333" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Preset chips */}
+            <Text style={styles.modalLabel}>Quick presets</Text>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={styles.chipsScroll}
+              contentContainerStyle={styles.chipsContent}>
+              {PRESET_PROMPTS.map(p => (
+                <TouchableOpacity
+                  key={p}
+                  style={[
+                    styles.chip,
+                    prompt === p && styles.chipActive,
+                  ]}
+                  onPress={() => setPrompt(p)}>
+                  <Text
+                    style={[
+                      styles.chipText,
+                      prompt === p && styles.chipTextActive,
+                    ]}
+                    numberOfLines={1}>
+                    {p}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+
+            {/* Custom prompt input */}
+            <Text style={[styles.modalLabel, {marginTop: 14}]}>
+              Or enter a custom prompt
+            </Text>
+            <TextInput
+              style={styles.promptInput}
+              value={prompt}
+              onChangeText={setPrompt}
+              multiline
+              numberOfLines={4}
+              placeholder="Describe the interior style…"
+              placeholderTextColor="#aaa"
+            />
+
+            <Text style={styles.modalHint}>
+              Tip: be specific — room type, style, colours, lighting, materials
+            </Text>
+
+            <TouchableOpacity
+              style={[
+                styles.submitButton,
+                !prompt.trim() && styles.submitButtonDisabled,
+              ]}
+              onPress={handleStage}
+              disabled={!prompt.trim()}>
+              <Icon name="sparkles-outline" size={18} color="#fff" />
+              <Text style={styles.submitButtonText}>
+                Stage with NanoBanana AI
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -247,7 +280,6 @@ export default function ThreeDScreen() {
 const styles = StyleSheet.create({
   container: {flex: 1, backgroundColor: '#f8f9fa'},
 
-  // ── Header ──────────────────────────────────────────────────────────────
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -261,10 +293,8 @@ const styles = StyleSheet.create({
   },
   headerTitle: {fontSize: 28, fontWeight: 'bold', color: '#333'},
 
-  // ── List ────────────────────────────────────────────────────────────────
   listContent: {padding: HORIZONTAL_PADDING, paddingBottom: 24},
 
-  // ── Card ────────────────────────────────────────────────────────────────
   modelCard: {
     width: CARD_WIDTH,
     backgroundColor: '#fff',
@@ -325,12 +355,11 @@ const styles = StyleSheet.create({
   viewOriginalBtn: {paddingHorizontal: 12, paddingBottom: 10},
   viewOriginalText: {fontSize: 11, color: '#999', textDecorationLine: 'underline'},
 
-  // ── Empty state ──────────────────────────────────────────────────────────
   emptyState: {alignItems: 'center', justifyContent: 'center', paddingTop: 100},
   emptyText: {fontSize: 18, fontWeight: '600', color: '#888', marginTop: 20},
   emptySubtext: {fontSize: 14, color: '#aaa', marginTop: 5, textAlign: 'center'},
 
-  // ── Modal ────────────────────────────────────────────────────────────────
+  // Modal
   modalOverlay: {
     flex: 1,
     justifyContent: 'flex-end',
@@ -350,12 +379,23 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   modalTitle: {flex: 1, fontSize: 18, fontWeight: '700', color: '#333'},
-  modalLabel: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#555',
-    marginBottom: 8,
+  modalLabel: {fontSize: 13, fontWeight: '600', color: '#555', marginBottom: 8},
+
+  chipsScroll: {marginBottom: 4},
+  chipsContent: {gap: 8, paddingRight: 8},
+  chip: {
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 20,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: '#f9f9f9',
+    maxWidth: 220,
   },
+  chipActive: {borderColor: '#6200ee', backgroundColor: '#f0e6ff'},
+  chipText: {fontSize: 12, color: '#555'},
+  chipTextActive: {color: '#6200ee', fontWeight: '600'},
+
   promptInput: {
     borderWidth: 1,
     borderColor: '#ddd',
@@ -363,7 +403,7 @@ const styles = StyleSheet.create({
     padding: 12,
     fontSize: 14,
     color: '#333',
-    minHeight: 100,
+    minHeight: 90,
     textAlignVertical: 'top',
     backgroundColor: '#fafafa',
   },
