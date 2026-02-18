@@ -11,7 +11,8 @@ export interface PanoramaItem {
   id: string;
   title: string;
   date: string;
-  imageUri: string; // file:// path to local JPEG
+  imageUri: string;         // file:// path to local stitched JPEG
+  stagedImageUri?: string;  // file:// path to NanoBanana AI-staged JPEG (optional)
 }
 
 /**
@@ -65,6 +66,36 @@ export async function savePanorama(
   console.log(`${LOG_TAG} savePanorama: saved id=${id}, imageUri=${imageUri}, totalPanoramas=${list.length}`);
 
   return item;
+}
+
+/**
+ * Save a NanoBanana-staged image for an existing panorama.
+ * Writes the file and updates the panorama record's stagedImageUri.
+ */
+export async function saveStaged(
+  panoramaId: string,
+  stagedBase64: string,
+): Promise<string> {
+  const dir = ReactNativeBlobUtil.fs.dirs.CacheDir;
+  const filename = `staged_${panoramaId}.jpg`;
+  const path = `${dir}/${filename}`;
+
+  console.log(`${LOG_TAG} saveStaged: writing path=${path}, base64Len=${stagedBase64.length}`);
+  await ReactNativeBlobUtil.fs.writeFile(path, stagedBase64, 'base64');
+
+  const stagedUri = path.startsWith('file://') ? path : `file://${path}`;
+
+  const list = await loadPanoramas();
+  const idx = list.findIndex(p => p.id === panoramaId);
+  if (idx !== -1) {
+    list[idx] = { ...list[idx], stagedImageUri: stagedUri };
+    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(list));
+    console.log(`${LOG_TAG} saveStaged: updated panorama id=${panoramaId} stagedUri=${stagedUri}`);
+  } else {
+    console.warn(`${LOG_TAG} saveStaged: panorama id=${panoramaId} not found in storage`);
+  }
+
+  return stagedUri;
 }
 
 /**

@@ -5,7 +5,7 @@
  * Android: enable cleartext in android/app/src/main/AndroidManifest.xml if using http.
  */
 // export const BACKEND_STITCH_URL = 'http://localhost:8000';
-export const BACKEND_STITCH_URL = 'http://10.187.185.171:8000';
+export const BACKEND_STITCH_URL = 'http://10.49.237.171:8000';
 
 export function getStitchApiUrl(path: string): string {
   const base = BACKEND_STITCH_URL.replace(/\/$/, '');

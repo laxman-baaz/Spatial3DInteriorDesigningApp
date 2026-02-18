@@ -1,6 +1,14 @@
 """
-Panorama stitching backend: FastAPI + OpenCV.
-POST /stitch: upload images + poses (pitch, yaw per image), get equirectangular panorama.
+Panorama stitching + AI staging backend: FastAPI + OpenCV + NanoBanana.
+
+Endpoints:
+  POST /stitch  – stitch photosphere images into equirectangular panorama
+  POST /stage   – send panorama to NanoBanana AI for interior staging
+  GET  /health  – health check
+
+Environment variables for /stage:
+  NANOBANANA_API_KEY  – from https://nanobananaapi.ai/api-key
+  IMGBB_API_KEY       – from https://imgbb.com  (free account, used for public hosting)
 """
 import json
 import os
@@ -8,11 +16,19 @@ import tempfile
 import uuid
 from pathlib import Path
 
+# Load backend/.env automatically if present (python-dotenv)
+try:
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).parent / ".env")
+except ImportError:
+    pass  # dotenv optional – keys can still be set as OS env vars
+
 import cv2
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response
 
 from stitch_equirect import stitch_equirectangular, FOV_H_DEG, FOV_V_DEG
+from nanobanana import stage_panorama as nb_stage_panorama
 
 app = FastAPI(
     title="Panorama Stitcher",
@@ -106,6 +122,63 @@ async def stitch(
             tmp_dir.rmdir()
         except OSError:
             pass
+
+
+@app.post("/stage")
+async def stage(
+    image: UploadFile = File(..., description="Stitched panorama JPEG to stage"),
+    prompt: str = Form(
+        ...,
+        description="Interior design staging prompt, e.g. 'modern living room with warm lighting'",
+    ),
+):
+    """
+    Send a stitched panorama to NanoBanana for AI interior staging.
+
+    Requires these environment variables to be set on the server:
+      NANOBANANA_API_KEY – NanoBanana bearer token
+      IMGBB_API_KEY      – imgbb.com API key (used to host the panorama publicly)
+
+    Returns the staged panorama as image/jpeg with header X-Staged-Id.
+    """
+    nb_key = os.environ.get("NANOBANANA_API_KEY", "")
+    imgbb_key = os.environ.get("IMGBB_API_KEY", "")
+
+    if not nb_key:
+        raise HTTPException(
+            status_code=503,
+            detail="NANOBANANA_API_KEY not configured on server. Set the env var and restart.",
+        )
+    if not imgbb_key:
+        raise HTTPException(
+            status_code=503,
+            detail="IMGBB_API_KEY not configured on server. Set the env var and restart.",
+        )
+
+    image_bytes = await image.read()
+    if len(image_bytes) == 0:
+        raise HTTPException(status_code=400, detail="Uploaded image is empty")
+
+    print(f"[/stage] prompt={prompt!r}, imageBytes={len(image_bytes)}")
+
+    try:
+        staged_bytes = nb_stage_panorama(image_bytes, prompt, nb_key, imgbb_key)
+    except TimeoutError as e:
+        raise HTTPException(status_code=504, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Staging failed: {e}")
+
+    # Persist the staged panorama alongside stitched ones
+    staged_id = str(uuid.uuid4())
+    staged_path = OUTPUT_DIR / f"staged_{staged_id}.jpg"
+    staged_path.write_bytes(staged_bytes)
+    print(f"[/stage] saved staged panorama → {staged_path}")
+
+    return Response(
+        content=staged_bytes,
+        media_type="image/jpeg",
+        headers={"X-Staged-Id": staged_id, "X-Staged-Path": str(staged_path)},
+    )
 
 
 @app.get("/health")

@@ -1,7 +1,9 @@
-# Panorama stitching backend (Python + OpenCV)
+# Panorama stitching + AI staging backend (Python + OpenCV + NanoBanana)
 fastapi==0.115.6
 uvicorn[standard]==0.32.1
 python-multipart==0.0.17
 opencv-python-headless==4.10.0.84
 numpy==2.2.1
 Pillow==11.0.0
+requests==2.32.3
+python-dotenv==1.0.1
