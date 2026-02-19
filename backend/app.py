@@ -1,14 +1,16 @@
 """
-Panorama stitching + AI staging backend: FastAPI + OpenCV + NanoBanana.
+Panorama stitching + AI staging + 3D reconstruction backend.
 
 Endpoints:
-  POST /stitch  – stitch photosphere images into equirectangular panorama
-  POST /stage   – send panorama to NanoBanana AI for interior staging
-  GET  /health  – health check
+  POST /stitch       – stitch photosphere images into equirectangular panorama
+  POST /stage        – send panorama to NanoBanana AI for interior staging
+  POST /reconstruct  – send panorama to WorldLabs Marble for 3D world generation
+  GET  /health       – health check
 
-Environment variables for /stage:
+Environment variables (set in backend/.env):
   NANOBANANA_API_KEY  – from https://nanobananaapi.ai/api-key
-  IMGBB_API_KEY       – from https://imgbb.com  (free account, used for public hosting)
+  IMGBB_API_KEY       – from https://imgbb.com
+  WORLDLABS_API_KEY   – from https://platform.worldlabs.ai/api-keys
 """
 import json
 import os
@@ -29,6 +31,7 @@ from fastapi.responses import Response
 
 from stitch_equirect import stitch_equirectangular, FOV_H_DEG, FOV_V_DEG
 from nanobanana import stage_panorama as nb_stage_panorama
+from worldlabs import reconstruct_world, WorldResult
 
 app = FastAPI(
     title="Panorama Stitcher",
@@ -179,6 +182,75 @@ async def stage(
         media_type="image/jpeg",
         headers={"X-Staged-Id": staged_id, "X-Staged-Path": str(staged_path)},
     )
+
+
+@app.post("/reconstruct")
+async def reconstruct(
+    image: UploadFile = File(
+        ..., description="Stitched or AI-staged panorama JPEG to convert to 3D"
+    ),
+    display_name: str = Form("Interior Panorama", description="World display name"),
+    text_prompt: str = Form(
+        "",
+        description="Optional text hint to guide reconstruction, e.g. 'modern living room'",
+    ),
+    model: str = Form(
+        "Marble 0.1-plus",
+        description="'Marble 0.1-plus' (best, ~5 min) or 'Marble 0.1-mini' (draft, ~45s)",
+    ),
+):
+    """
+    Send a panorama to WorldLabs Marble for 3D world generation.
+
+    Requires WORLDLABS_API_KEY in backend/.env.
+
+    Returns JSON with all WorldLabs asset URLs:
+      world_id, marble_url, thumbnail_url, caption, pano_url,
+      spz_url_100k, spz_url_500k, spz_url_full, collider_mesh_url (GLB)
+    """
+    wl_key = os.environ.get("WORLDLABS_API_KEY", "")
+    if not wl_key:
+        raise HTTPException(
+            status_code=503,
+            detail="WORLDLABS_API_KEY not configured. Set it in backend/.env and restart.",
+        )
+
+    image_bytes = await image.read()
+    if len(image_bytes) == 0:
+        raise HTTPException(status_code=400, detail="Uploaded image is empty")
+
+    # Auto-generate a text prompt from the display name if none provided
+    effective_prompt = text_prompt.strip() or display_name
+
+    print(
+        f"[/reconstruct] display_name={display_name!r}"
+        f" model={model!r} imageBytes={len(image_bytes)}"
+    )
+
+    try:
+        result: WorldResult = reconstruct_world(
+            image_bytes   = image_bytes,
+            display_name  = display_name,
+            text_prompt   = effective_prompt,
+            api_key       = wl_key,
+            model         = model,
+        )
+    except TimeoutError as e:
+        raise HTTPException(status_code=504, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Reconstruction failed: {e}")
+
+    return {
+        "world_id":          result.world_id,
+        "marble_url":        result.marble_url,
+        "thumbnail_url":     result.thumbnail_url,
+        "caption":           result.caption,
+        "pano_url":          result.pano_url,
+        "spz_url_100k":      result.spz_url_100k,
+        "spz_url_500k":      result.spz_url_500k,
+        "spz_url_full":      result.spz_url_full,
+        "collider_mesh_url": result.collider_mesh_url,
+    }
 
 
 @app.get("/health")

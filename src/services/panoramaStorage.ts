@@ -7,12 +7,25 @@ import ReactNativeBlobUtil from 'react-native-blob-util';
 const STORAGE_KEY = '@panoramas';
 const LOG_TAG = '[PanoramaStorage]';
 
+export interface World3DMeta {
+  worldId:         string;
+  marbleUrl:       string;   // https://marble.worldlabs.ai/world/{id}
+  thumbnailUrl:    string | null;
+  caption:         string | null;
+  panoUrl:         string | null;
+  spzUrl100k:      string | null;
+  spzUrl500k:      string | null;
+  spzUrlFull:      string | null;
+  colliderMeshUrl: string | null; // GLB
+}
+
 export interface PanoramaItem {
   id: string;
   title: string;
   date: string;
   imageUri: string;         // file:// path to local stitched JPEG
   stagedImageUri?: string;  // file:// path to NanoBanana AI-staged JPEG (optional)
+  world3d?: World3DMeta;    // WorldLabs 3D reconstruction metadata (optional)
 }
 
 /**
@@ -96,6 +109,26 @@ export async function saveStaged(
   }
 
   return stagedUri;
+}
+
+/**
+ * Attach WorldLabs 3D reconstruction metadata to an existing panorama record.
+ */
+export async function saveWorld3D(
+  panoramaId: string,
+  world3d: World3DMeta,
+): Promise<void> {
+  const list = await loadPanoramas();
+  const idx  = list.findIndex(p => p.id === panoramaId);
+  if (idx !== -1) {
+    list[idx] = { ...list[idx], world3d };
+    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(list));
+    console.log(
+      `${LOG_TAG} saveWorld3D: updated panorama id=${panoramaId} worldId=${world3d.worldId}`,
+    );
+  } else {
+    console.warn(`${LOG_TAG} saveWorld3D: panorama id=${panoramaId} not found`);
+  }
 }
 
 /**
