@@ -1,4 +1,7 @@
 {
   "name": "InteriorDesigning3DApp",
-  "displayName": "3D Interior Designing App"
+  "displayName": "3D Interior Designing App",
+  "plugins": [
+    "expo-asset"
+  ]
 }
