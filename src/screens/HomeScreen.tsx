@@ -84,6 +84,7 @@ export default function HomeScreen({navigation}: any) {
             </View>
             <Icon name="arrow-forward-circle" size={32} color="#fff" />
           </TouchableOpacity>
+
         </View>
 
         {/* Recent Scans Section */}

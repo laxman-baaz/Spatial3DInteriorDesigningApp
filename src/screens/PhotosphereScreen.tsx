@@ -27,16 +27,31 @@ import {
 } from '../services/panoramaStorage';
 
 const {width, height} = Dimensions.get('window');
-const CIRCLE_RADIUS = 120;
+const VIEWFINDER_WIDTH = width * 0.8;
+const VIEWFINDER_HEIGHT = height * 0.7;
 const FOV_H = 60;
 const FOV_V = 45;
 const ALIGN_THRESHOLD_PX = 20;
+/** Must hold the dot aligned for this long (ms) before auto-capture */
+const ALIGN_HOLD_MS = 1000;
+
+// High-resolution capture for panorama: 12MP 4:3 (matches FOV 60°×45°)
+const PHOTO_TARGET_WIDTH = 4032;
+const PHOTO_TARGET_HEIGHT = 3024;
 
 const PhotosphereScreen = () => {
   const device = useCameraDevice('back');
 
-  // --- 2. SELECT BEST FORMAT (Highest Resolution) ---
-  const format = useCameraFormat(device, [{photoResolution: 'max'}]);
+  // Prefer format with photo resolution closest to 12MP 4:3 for better width/height
+  const format = useCameraFormat(device, [
+    {
+      photoResolution: {
+        width: PHOTO_TARGET_WIDTH,
+        height: PHOTO_TARGET_HEIGHT,
+      },
+    },
+    {photoAspectRatio: 4 / 3},
+  ]);
 
   const camera = React.useRef<Camera>(null);
   const {hasPermission, requestPermission} = useCameraPermission();
@@ -67,6 +82,8 @@ const PhotosphereScreen = () => {
   const totalDots = TARGET_DOTS.length; // 22 (or 32 when switched)
   const allCaptured = capturedCount === totalDots;
   const hasLoggedAllCaptured = React.useRef(false);
+  const alignedPointIdRef = React.useRef<number | null>(null);
+  const holdTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Reset orientation on mount to establishing "Zero"
   useEffect(() => {
@@ -74,13 +91,21 @@ const PhotosphereScreen = () => {
   }, []);
 
   useEffect(() => {
+    return () => {
+      if (holdTimeoutRef.current != null) {
+        clearTimeout(holdTimeoutRef.current);
+        holdTimeoutRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
     checkAlignment();
   }, [orientation, points]);
 
-  const checkAlignment = async () => {
+  const checkAlignment = () => {
     if (isCapturing) return;
 
-    // Check ALL uncaptured points - capture ANY aligned dot
     const uncapturedPoints = points.filter(p => !p.captured);
 
     if (uncapturedPoints.length === 0) {
@@ -88,6 +113,11 @@ const PhotosphereScreen = () => {
         hasLoggedAllCaptured.current = true;
         console.log('All dots captured! 🎉');
       }
+      if (holdTimeoutRef.current != null) {
+        clearTimeout(holdTimeoutRef.current);
+        holdTimeoutRef.current = null;
+      }
+      alignedPointIdRef.current = null;
       return;
     }
     hasLoggedAllCaptured.current = false;
@@ -96,18 +126,43 @@ const PhotosphereScreen = () => {
     const cy = height / 2;
     const projectionParams = { width, height, fovH: FOV_H, fovV: FOV_V };
 
+    // Find the dot closest to center that is within threshold (actual aim, not first in list)
+    let best: { point: (typeof uncapturedPoints)[0]; dist: number } | null = null;
     for (const point of uncapturedPoints) {
       const {x, y} = project3DTo2D(point, orientation, projectionParams);
-
-      const distFromCenter = Math.sqrt(
-        Math.pow(x - cx, 2) + Math.pow(y - cy, 2),
-      );
-
-      if (distFromCenter < ALIGN_THRESHOLD_PX) {
-        await takePhoto(point.id);
-        break; // Capture one at a time
+      const dist = Math.sqrt(Math.pow(x - cx, 2) + Math.pow(y - cy, 2));
+      if (dist < ALIGN_THRESHOLD_PX && (best == null || dist < best.dist)) {
+        best = { point, dist };
       }
     }
+
+    if (best == null) {
+      if (holdTimeoutRef.current != null) {
+        clearTimeout(holdTimeoutRef.current);
+        holdTimeoutRef.current = null;
+      }
+      alignedPointIdRef.current = null;
+      return;
+    }
+
+    const { point } = best;
+    if (alignedPointIdRef.current === point.id) {
+      // Still on same dot; timer already running, do nothing
+      return;
+    }
+
+    // New dot aligned: cancel previous timer and start 2s hold for this dot
+    if (holdTimeoutRef.current != null) {
+      clearTimeout(holdTimeoutRef.current);
+      holdTimeoutRef.current = null;
+    }
+    alignedPointIdRef.current = point.id;
+    const pointIdToCapture = point.id;
+    holdTimeoutRef.current = setTimeout(() => {
+      holdTimeoutRef.current = null;
+      alignedPointIdRef.current = null;
+      takePhoto(pointIdToCapture);
+    }, ALIGN_HOLD_MS);
   };
 
   const takePhoto = async (id: number) => {
@@ -157,7 +212,7 @@ const PhotosphereScreen = () => {
           pitch: p.pitch,
           yaw: p.yaw,
         })),
-        { outputWidth: 4096 }
+        { outputWidth: 4096, forceFull360: true }
       );
       console.log('[Photosphere] Stitch result:', {
         success: result.success,
@@ -230,10 +285,15 @@ const PhotosphereScreen = () => {
             <View style={styles.centerHole} />
           </View>
         }>
-        <SphereReview points={points} orientation={orientation} />
+        <SphereReview
+          points={points}
+          orientation={orientation}
+          viewFinderWidth={VIEWFINDER_WIDTH}
+          viewFinderHeight={VIEWFINDER_HEIGHT}
+        />
       </MaskedView>
 
-      {/* LAYER 3: Target Dots & Guides (same dimensions/FOV as capture) */}
+      {/* LAYER 3: Target Dots & Guides (viewfinder 80% × 70% of screen) */}
       <SphereOverlay
         orientation={orientation}
         points={points}
@@ -241,7 +301,8 @@ const PhotosphereScreen = () => {
         height={height}
         fovH={FOV_H}
         fovV={FOV_V}
-        circleRadius={CIRCLE_RADIUS}
+        viewFinderWidth={VIEWFINDER_WIDTH}
+        viewFinderHeight={VIEWFINDER_HEIGHT}
         alignThresholdPx={ALIGN_THRESHOLD_PX}
       />
 
@@ -286,12 +347,12 @@ const styles = StyleSheet.create({
   },
   centerHole: {
     position: 'absolute',
-    top: height / 2 - CIRCLE_RADIUS,
-    left: width / 2 - CIRCLE_RADIUS,
-    width: CIRCLE_RADIUS * 2,
-    height: CIRCLE_RADIUS * 2,
-    borderRadius: CIRCLE_RADIUS,
-    backgroundColor: 'transparent', // The mask is transparent, so content is hidden.
+    top: height / 2 - VIEWFINDER_HEIGHT / 2,
+    left: width / 2 - VIEWFINDER_WIDTH / 2,
+    width: VIEWFINDER_WIDTH,
+    height: VIEWFINDER_HEIGHT,
+    borderRadius: 16,
+    backgroundColor: 'transparent', // The mask is transparent, so camera shows through.
   },
   hud: {
     position: 'absolute',

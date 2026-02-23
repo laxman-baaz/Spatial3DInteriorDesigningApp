@@ -82,10 +82,11 @@ export const useDeviceOrientation = () => {
         ALPHA * gyroRollStep + (1 - ALPHA) * lastAccel.current.roll;
 
       // Yaw Fusion (Around Y mechanism - Panorama)
-      // Previously using 'z' (which is Roll rate). Switching to 'y' (Yaw rate).
-      // +Y is CCW (Left Turn).
-      // We'll accumulate this.
-      const fusedYaw = current.yaw + y * dt;
+      // Accumulate then wrap to [-π, π] so fast rotation doesn't cause opposite-side display
+      let fusedYaw = current.yaw + y * dt;
+      const TWO_PI = 2 * Math.PI;
+      if (fusedYaw > Math.PI) fusedYaw -= TWO_PI;
+      if (fusedYaw < -Math.PI) fusedYaw += TWO_PI;
 
       currentOrientation.current = {
         pitch: fusedPitch,

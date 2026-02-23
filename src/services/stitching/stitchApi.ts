@@ -27,13 +27,14 @@ export interface StitchApiImage {
  */
 export async function stitchPanoramaViaApi(
   images: StitchApiImage[],
-  options: { outputWidth?: number } = {}
+  options: { outputWidth?: number; forceFull360?: boolean } = {}
 ): Promise<StitchApiResult> {
   const start = Date.now();
   const outputWidth = options.outputWidth ?? 4096;
+  const forceFull360 = options.forceFull360 ?? false;
   const url = getStitchApiUrl('/stitch');
 
-  console.log(`${LOG_TAG} Calling POST ${url} with ${images.length} image(s), outputWidth=${outputWidth}`);
+  console.log(`${LOG_TAG} Calling POST ${url} with ${images.length} image(s), outputWidth=${outputWidth}, forceFull360=${forceFull360}`);
 
   if (images.length < 1) {
     console.log(`${LOG_TAG} Abort: no images`);
@@ -49,6 +50,7 @@ export async function stitchPanoramaViaApi(
   const body = [
     { name: 'poses_json', data: posesJson },
     { name: 'output_width', data: String(outputWidth) },
+    { name: 'force_full_360', data: forceFull360 ? 'true' : 'false' },
     ...images.map((img, i) => ({
       name: 'images',
       filename: `img_${i}.jpg`,
@@ -72,7 +74,13 @@ export async function stitchPanoramaViaApi(
     if (status < 200 || status >= 300) {
       let errBody = '';
       try {
-        errBody = typeof response.text === 'function' ? response.text() : await Promise.resolve(response.respInfo?.body ?? '');
+        if (typeof response.text === 'function') {
+          const result = response.text();
+          errBody =
+            result != null && typeof (result as Promise<string>).then === 'function'
+              ? await (result as Promise<string>)
+              : String(result ?? '');
+        }
       } catch (_) {}
       console.log(`${LOG_TAG} Error body: ${String(errBody).slice(0, 300)}`);
       return {
@@ -100,8 +108,10 @@ export async function stitchPanoramaViaApi(
         const path = response.path?.();
         if (path) {
           base64Str = await ReactNativeBlobUtil.fs.readFile(path, 'base64');
-          imageData = `data:image/jpeg;base64,${base64Str}`;
-          console.log(`${LOG_TAG} Read response from path, base64 length=${base64Str.length}`);
+          if (base64Str != null) {
+            imageData = `data:image/jpeg;base64,${base64Str}`;
+            console.log(`${LOG_TAG} Read response from path, base64 length=${base64Str.length}`);
+          }
         }
       }
     } catch (e) {

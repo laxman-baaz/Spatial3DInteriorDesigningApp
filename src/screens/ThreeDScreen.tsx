@@ -29,6 +29,7 @@ import {
 } from '../services/panoramaStorage';
 import {stageWithAI} from '../services/nanoBanana/nanoBananaService';
 import {reconstructWorld} from '../services/worldLabs/worldLabsService';
+import PanoramaViewer from '../components/PanoramaViewer';
 
 const {width} = Dimensions.get('window');
 const HORIZONTAL_PADDING = 20;
@@ -77,6 +78,9 @@ export default function ThreeDScreen() {
   const [worldPrompt,      setWorldPrompt]       = useState('');
   const [worldModel,       setWorldModel]        = useState<'Marble 0.1-plus' | 'Marble 0.1-mini'>('Marble 0.1-plus');
 
+  // Panorama viewer: tap a card to view the 360° panorama
+  const [viewerItem, setViewerItem] = useState<PanoramaItem | null>(null);
+
   useFocusEffect(
     useCallback(() => {
       loadPanoramas().then(list => {
@@ -120,6 +124,11 @@ export default function ThreeDScreen() {
   }, []);
 
   const closeWorldModal = useCallback(() => setWorldModal(null), []);
+
+  const openPanoramaViewer = useCallback((item: PanoramaItem) => {
+    setViewerItem(item);
+  }, []);
+  const closePanoramaViewer = useCallback(() => setViewerItem(null), []);
 
   const handleReconstruct = useCallback(async () => {
     if (!worldModal) return;
@@ -186,8 +195,12 @@ export default function ThreeDScreen() {
 
       return (
         <View style={styles.modelCard}>
-          {/* Thumbnail */}
-          <View style={styles.modelThumbnail}>
+          {/* Thumbnail — tap to open panorama viewer */}
+          <TouchableOpacity
+            style={styles.modelThumbnail}
+            onPress={() => displayUri && setViewerItem(item)}
+            activeOpacity={1}
+            disabled={!displayUri}>
             {displayUri ? (
               <Image
                 source={{uri: displayUri}}
@@ -208,7 +221,11 @@ export default function ThreeDScreen() {
                 <Text style={styles.badgeText}> 3D</Text>
               </View>
             )}
-          </View>
+            <View style={styles.viewPanoramaHint}>
+              <Icon name="expand-outline" size={14} color="rgba(255,255,255,0.9)" />
+              <Text style={styles.viewPanoramaHintText}>View panorama</Text>
+            </View>
+          </TouchableOpacity>
 
           {/* Info + action row */}
           <View style={styles.modelInfo}>
@@ -216,6 +233,17 @@ export default function ThreeDScreen() {
               <Text style={styles.modelTitle} numberOfLines={1}>{item.title}</Text>
               <Text style={styles.modelDate}>{item.date}</Text>
             </View>
+
+            {/* View panorama */}
+            {displayUri && (
+              <TouchableOpacity
+                style={[styles.actionBtn, styles.viewPanoBtn]}
+                onPress={() => openPanoramaViewer(item)}
+                activeOpacity={0.7}>
+                <Icon name="expand-outline" size={14} color="#fff" />
+                <Text style={styles.actionBtnText}>View</Text>
+              </TouchableOpacity>
+            )}
 
             {/* AI Stage button */}
             {isStaging ? (
@@ -300,7 +328,7 @@ export default function ThreeDScreen() {
         </View>
       );
     },
-    [stagingId, reconstructingId, openStageModal, openWorldModal],
+    [stagingId, reconstructingId, openStageModal, openWorldModal, openPanoramaViewer],
   );
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -478,6 +506,14 @@ export default function ThreeDScreen() {
           </View>
         </KeyboardAvoidingView>
       </Modal>
+
+      {/* ── Panorama viewer (full-screen 360° drag-to-look) ───────────────── */}
+      <PanoramaViewer
+        visible={!!viewerItem}
+        imageUri={viewerItem?.stagedImageUri ?? viewerItem?.imageUri ?? ''}
+        title={viewerItem?.title}
+        onClose={() => setViewerItem(null)}
+      />
     </SafeAreaView>
   );
 }
@@ -536,6 +572,23 @@ const styles = StyleSheet.create({
   },
   badge3D: {backgroundColor: '#00897b', right: 10, top: 38},
   badgeText: {color: '#fff', fontSize: 11, fontWeight: '700'},
+  viewPanoramaHint: {
+    position: 'absolute',
+    bottom: 10,
+    left: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  viewPanoramaHintText: {
+    color: 'rgba(255,255,255,0.9)',
+    fontSize: 12,
+    fontWeight: '600',
+  },
 
   modelInfo: {
     flexDirection: 'row',
@@ -557,6 +610,7 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   actionBtnText: {color: '#fff', fontWeight: '600', fontSize: 12},
+  viewPanoBtn: {backgroundColor: '#555'},
 
   spinnerRow: {flexDirection: 'row', alignItems: 'center', gap: 6},
   spinnerText: {fontSize: 12, color: '#6200ee', fontWeight: '500'},

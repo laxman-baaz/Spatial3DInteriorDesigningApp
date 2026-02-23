@@ -4,8 +4,8 @@ Panorama stitching + AI staging + 3D reconstruction backend.
 Endpoints:
   POST /stitch       – stitch photosphere images into equirectangular panorama
   POST /stage        – send panorama to NanoBanana AI for interior staging
-  POST /reconstruct  – send panorama to WorldLabs Marble for 3D world generation
-  GET  /health       – health check
+  POST /reconstruct – send panorama to WorldLabs Marble for 3D world generation
+  GET  /health      – health check
 
 Environment variables (set in backend/.env):
   NANOBANANA_API_KEY  – from https://nanobananaapi.ai/api-key
@@ -57,11 +57,12 @@ async def stitch(
         description='JSON array of {"pitch": deg, "yaw": deg} for each image, same order',
     ),
     output_width: int = Form(4096, description="Equirectangular width (height = width/2)"),
+    force_full_360: bool = Form(False, description="If true, output always 360×180 (2:1) for e.g. WorldLabs 3D; uncaptured areas black"),
 ):
     """
     Upload images and their poses; returns stitched equirectangular panorama as JPEG.
     Use 1 to 32+ images; partial coverage is allowed. Poses: pitch 0=nadir, 90=horizon,
-    180=zenith; yaw 0..360 (degrees).
+    180=zenith; yaw 0..360 (degrees). Set force_full_360=true for 3D export (WorldLabs).
     """
     try:
         poses = json.loads(poses_json)
@@ -96,6 +97,7 @@ async def stitch(
             output_width=output_width,
             fov_h_deg=FOV_H_DEG,
             fov_v_deg=FOV_V_DEG,
+            force_full_360=force_full_360,
         )
 
         # Encode to JPEG

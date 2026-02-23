@@ -32,24 +32,24 @@ export const project3DTo2D = (
   const normCurrentYaw = ((currentYawDeg % 360) + 360) % 360;
   const normTargetYaw  = ((target.yaw      % 360) + 360) % 360;
 
-  // 3. Calculate Difference – shortest path on the circle
+  // 3. Difference – shortest path on the circle (current - target)
   let diffYaw   = normCurrentYaw - normTargetYaw;
   let diffPitch = target.pitch - currentPitchDeg;
 
-  // Wrap yaw to (-180, 180] so the dot always takes the shortest route
+  // Wrap yaw to (-180, 180] so the dot takes the shortest route
   if (diffYaw >  180) diffYaw -= 360;
   if (diffYaw < -180) diffYaw += 360;
 
-  // 4. Check Visibility (Is it inside the camera view?)
-  // We check if it fits within the Field of View
-  const isVisible = 
-    Math.abs(diffYaw) < (fovH / 1.5) && 
-    Math.abs(diffPitch) < (fovV / 1.5);
+  // 4. Check Visibility – wider margin so more tiles render and overlap, fewer gaps
+  const margin = 1.28;
+  const isVisible =
+    Math.abs(diffYaw) < (fovH * margin) &&
+    Math.abs(diffPitch) < (fovV * margin);
 
   // 5. Project to Screen Coordinates
   // Note: -diffPitch because pitch up is usually negative Y in screen coords
   const x = (width / 2) + (diffYaw * (width / fovH));
   const y = (height / 2) - (diffPitch * (height / fovV));
 
-  return { x, y, isVisible };
+  return { x, y, isVisible, diffYaw, diffPitch };
 };

@@ -3,7 +3,7 @@
   "version": "0.0.1",
   "private": true,
   "scripts": {
-    "postinstall": "patch-package",
+    "postinstall": "patch-package && node scripts/patch-expo-asset.js",
     "android": "react-native run-android",
     "android:build": "react-native run-android --no-packager",
     "ios": "react-native run-ios",
@@ -24,6 +24,7 @@
     "expo-asset": "~11.0.5",
     "expo-file-system": "~18.0.4",
     "expo-gl": "^16.0.10",
+    "expo-three": "^8.0.0",
     "react": "18.3.1",
     "react-native": "0.76.6",
     "react-native-blob-util": "^0.24.7",

@@ -1,6 +1,6 @@
 import React from 'react';
 import {Dimensions, StyleSheet, View} from 'react-native';
-import Svg, {Circle, G} from 'react-native-svg';
+import Svg, {Circle, G, Rect} from 'react-native-svg';
 import {project3DTo2D} from '../utils/projection';
 
 interface TargetPoint {
@@ -20,7 +20,9 @@ interface Props {
   height?: number;
   fovH?: number;
   fovV?: number;
-  circleRadius?: number;
+  /** Viewfinder size: width and height (e.g. 80% and 70% of screen). */
+  viewFinderWidth?: number;
+  viewFinderHeight?: number;
   /** Px distance from center to show "aligned" (green). Should match capture threshold. */
   alignThresholdPx?: number;
 }
@@ -32,7 +34,8 @@ const SphereOverlay: React.FC<Props> = ({
   height: propHeight,
   fovH = FOV_H,
   fovV = FOV_V,
-  circleRadius = 120,
+  viewFinderWidth: propVfw,
+  viewFinderHeight: propVfh,
   alignThresholdPx = 20,
 }) => {
   const {width: dimWidth, height: dimHeight} = Dimensions.get('window');
@@ -40,16 +43,20 @@ const SphereOverlay: React.FC<Props> = ({
   const height = propHeight ?? dimHeight;
   const cx = width / 2;
   const cy = height / 2;
-  const r = circleRadius;
+  const vfw = propVfw ?? width * 0.8;
+  const vfh = propVfh ?? height * 0.7;
 
   return (
     <View style={StyleSheet.absoluteFill} pointerEvents="none">
       <Svg height="100%" width="100%" viewBox={`0 0 ${width} ${height}`}>
-        {/* Viewfinder Border */}
-        <Circle
-          cx={cx}
-          cy={cy}
-          r={r}
+        {/* Viewfinder Border (dynamic width × height, centered) */}
+        <Rect
+          x={cx - vfw / 2}
+          y={cy - vfh / 2}
+          width={vfw}
+          height={vfh}
+          rx="16"
+          ry="16"
           stroke="white"
           strokeWidth="2"
           fill="none"
@@ -78,11 +85,11 @@ const SphereOverlay: React.FC<Props> = ({
           return (
             <G key={`dot-${point.id}`} x={x} y={y}>
               <Circle
-                r={isAligned ? '20' : '12'}
-                fill={isAligned ? '#00FF00' : 'rgba(255, 255, 255, 0.8)'}
+                r={isAligned ? '20' : '15'}
+                fill="#00FF00"
                 stroke="black"
                 strokeWidth="1"
-                opacity={0.9}
+                opacity={0.8}
               />
               {isAligned && (
                 <Circle

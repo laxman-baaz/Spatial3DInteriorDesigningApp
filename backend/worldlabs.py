@@ -8,14 +8,15 @@ Full pipeline for 360 panorama → navigable 3D world:
   4. poll operations → wait until done
   5. return          → world metadata (splat URLs, mesh URL, marble URL, etc.)
 
+WorldLabs requires full 360° equirectangular, 2:1 aspect ratio, to treat the
+image as the ENVIRONMENT (not a picture on a wall). We ensure 2:1 and send
+an explicit prompt so the panorama is reconstructed as the real 3D world.
+
 Output format:
   - SPZ  (3D Gaussian Splat) – 100k / 500k / full_res variants
   - GLB  (collider mesh)
   - JPEG (re-rendered panorama from WorldLabs)
   - Marble viewer URL  (https://marble.worldlabs.ai/world/{world_id})
-
-Note: WorldLabs does NOT export GLTF directly. SPZ is their native format.
-      The collider_mesh_url gives a GLB mesh for physics / raycasting.
 
 Environment variable:
   WORLDLABS_API_KEY  – from https://platform.worldlabs.ai/api-keys
@@ -25,6 +26,8 @@ import time
 from dataclasses import dataclass
 from typing import Optional
 
+import cv2
+import numpy as np
 import requests
 
 _BASE = "https://api.worldlabs.ai"
@@ -48,6 +51,42 @@ class WorldResult:
 
 def _headers(api_key: str) -> dict:
     return {"WLT-Api-Key": api_key, "Content-Type": "application/json"}
+
+
+# WorldLabs recommended panorama size for environment recognition
+_PANO_WIDTH_WORLDLABS = 2560
+_PANO_HEIGHT_WORLDLABS = 1280  # 2:1
+
+# ── Ensure full 360° equirectangular (2:1) for WorldLabs environment mode ─
+def ensure_equirect_2to1(image_bytes: bytes) -> bytes:
+    """
+    Resize to exactly 2:1 and WorldLabs-recommended size (2560×1280) so the
+    image is recognized as a full 360° panorama and used as the 3D environment,
+    not as a picture on a wall.
+    """
+    arr = np.frombuffer(image_bytes, dtype=np.uint8)
+    img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+    if img is None:
+        return image_bytes
+    h, w = img.shape[:2]
+    if w <= 0 or h <= 0:
+        return image_bytes
+    target_ratio = 2.0
+    current_ratio = w / h
+    if abs(current_ratio - target_ratio) > 0.01:
+        if current_ratio > target_ratio:
+            new_w, new_h = w, int(round(w / target_ratio))
+        else:
+            new_h, new_w = h, int(round(h * target_ratio))
+        new_w, new_h = max(new_w, 256), max(new_h, 128)
+        img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+    # Resize to recommended size so WorldLabs reliably treats as full 360° pano
+    img = cv2.resize(
+        img, (_PANO_WIDTH_WORLDLABS, _PANO_HEIGHT_WORLDLABS),
+        interpolation=cv2.INTER_LINEAR,
+    )
+    _, out = cv2.imencode(".jpg", img)
+    return out.tobytes() if out is not None else image_bytes
 
 
 # ── Step 1+2: upload panorama as a media asset ────────────────────────────────
@@ -107,6 +146,14 @@ def upload_panorama(image_bytes: bytes, api_key: str) -> str:
     return media_asset_id
 
 
+# Prompt so WorldLabs reconstructs FROM the panorama as the only source (no wall photo / no extra objects)
+_PANORAMA_ENVIRONMENT_PROMPT = (
+    "This is a full 360 degree equirectangular panorama of a real interior room. "
+    "Reconstruct the entire 3D navigable world from this single panorama only. "
+    "The panorama IS the scene: use it as the complete environment. "
+    "Do not place this image as a texture on a wall or as a picture. Do not generate separate 3D objects; the geometry and appearance must come from this panorama."
+)
+
 # ── Step 3: submit world generation ──────────────────────────────────────────
 def submit_world_generation(
     media_asset_id: str,
@@ -116,6 +163,7 @@ def submit_world_generation(
     model: str = "Marble 0.1-plus",
 ) -> str:
     """Submit a panorama→world generation job; return operation_id."""
+    effective_prompt = (text_prompt or display_name or "").strip() or _PANORAMA_ENVIRONMENT_PROMPT
     payload = {
         "display_name": display_name,
         "model": model,
@@ -124,9 +172,10 @@ def submit_world_generation(
             "image_prompt": {
                 "source": "media_asset",
                 "media_asset_id": media_asset_id,
-                "is_pano": True,        # tell WorldLabs this is a 360 panorama
             },
-            "text_prompt": text_prompt,
+            "is_pano": True,
+            "text_prompt": effective_prompt,
+            "disable_recaption": True,
         },
     }
 
@@ -240,8 +289,10 @@ def reconstruct_world(
 ) -> WorldResult:
     """
     Full pipeline: panorama bytes → WorldResult with all asset URLs.
+    Ensures 2:1 aspect ratio so WorldLabs uses the image as the full environment.
     Takes ~5 minutes with Marble 0.1-plus, ~30-45s with Marble 0.1-mini.
     """
+    image_bytes = ensure_equirect_2to1(image_bytes)
     media_asset_id = upload_panorama(image_bytes, api_key)
     operation_id   = submit_world_generation(
         media_asset_id, display_name, text_prompt, api_key, model
