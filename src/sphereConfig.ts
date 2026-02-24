@@ -55,45 +55,48 @@ export interface TargetDot {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const TARGET_DOTS: TargetDot[] = [
+  // --- ZENITH (Pitch 180°) - 1 Photo ---
   {id: 'top', pitch: 180, yaw: 0, ring: 'zenith'},
 
-  {id: 'u60_1', pitch: 150, yaw: 0, ring: 'upper60'},
-  {id: 'u60_2', pitch: 150, yaw: 72, ring: 'upper60'},
-  {id: 'u60_3', pitch: 150, yaw: 144, ring: 'upper60'},
-  {id: 'u60_4', pitch: 150, yaw: 216, ring: 'upper60'},
-  {id: 'u60_5', pitch: 150, yaw: 288, ring: 'upper60'},
+  // --- UPPER RING (Pitch 130°, Elev +40°) - 9 Photos, every 40° ---
+  {id: 'u1', pitch: 130, yaw: 0, ring: 'upper40'},
+  {id: 'u2', pitch: 130, yaw: 40, ring: 'upper40'},
+  {id: 'u3', pitch: 130, yaw: 80, ring: 'upper40'},
+  {id: 'u4', pitch: 130, yaw: 120, ring: 'upper40'},
+  {id: 'u5', pitch: 130, yaw: 160, ring: 'upper40'},
+  {id: 'u6', pitch: 130, yaw: 200, ring: 'upper40'},
+  {id: 'u7', pitch: 130, yaw: 240, ring: 'upper40'},
+  {id: 'u8', pitch: 130, yaw: 280, ring: 'upper40'},
+  {id: 'u9', pitch: 130, yaw: 320, ring: 'upper40'},
 
-  {id: 'u30_1', pitch: 120, yaw: 0, ring: 'upper30'},
-  {id: 'u30_2', pitch: 120, yaw: 60, ring: 'upper30'},
-  {id: 'u30_3', pitch: 120, yaw: 120, ring: 'upper30'},
-  {id: 'u30_4', pitch: 120, yaw: 180, ring: 'upper30'},
-  {id: 'u30_5', pitch: 120, yaw: 240, ring: 'upper30'},
-  {id: 'u30_6', pitch: 120, yaw: 300, ring: 'upper30'},
-
+  // --- CENTER EQUATOR (Pitch 90°, Elev 0°) - 12 Photos, every 30° ---
   {id: 'c1', pitch: 90, yaw: 0, ring: 'center'},
-  {id: 'c2', pitch: 90, yaw: 45, ring: 'center'},
-  {id: 'c3', pitch: 90, yaw: 90, ring: 'center'},
-  {id: 'c4', pitch: 90, yaw: 135, ring: 'center'},
-  {id: 'c5', pitch: 90, yaw: 180, ring: 'center'},
-  {id: 'c6', pitch: 90, yaw: 225, ring: 'center'},
-  {id: 'c7', pitch: 90, yaw: 270, ring: 'center'},
-  {id: 'c8', pitch: 90, yaw: 315, ring: 'center'},
+  {id: 'c2', pitch: 90, yaw: 30, ring: 'center'},
+  {id: 'c3', pitch: 90, yaw: 60, ring: 'center'},
+  {id: 'c4', pitch: 90, yaw: 90, ring: 'center'},
+  {id: 'c5', pitch: 90, yaw: 120, ring: 'center'},
+  {id: 'c6', pitch: 90, yaw: 150, ring: 'center'},
+  {id: 'c7', pitch: 90, yaw: 180, ring: 'center'},
+  {id: 'c8', pitch: 90, yaw: 210, ring: 'center'},
+  {id: 'c9', pitch: 90, yaw: 240, ring: 'center'},
+  {id: 'c10', pitch: 90, yaw: 270, ring: 'center'},
+  {id: 'c11', pitch: 90, yaw: 300, ring: 'center'},
+  {id: 'c12', pitch: 90, yaw: 330, ring: 'center'},
 
-  {id: 'l30_1', pitch: 60, yaw: 0, ring: 'lower30'},
-  {id: 'l30_2', pitch: 60, yaw: 60, ring: 'lower30'},
-  {id: 'l30_3', pitch: 60, yaw: 120, ring: 'lower30'},
-  {id: 'l30_4', pitch: 60, yaw: 180, ring: 'lower30'},
-  {id: 'l30_5', pitch: 60, yaw: 240, ring: 'lower30'},
-  {id: 'l30_6', pitch: 60, yaw: 300, ring: 'lower30'},
+  // --- LOWER RING (Pitch 50°, Elev -40°) - 9 Photos, every 40° ---
+  {id: 'l1', pitch: 50, yaw: 0, ring: 'lower40'},
+  {id: 'l2', pitch: 50, yaw: 40, ring: 'lower40'},
+  {id: 'l3', pitch: 50, yaw: 80, ring: 'lower40'},
+  {id: 'l4', pitch: 50, yaw: 120, ring: 'lower40'},
+  {id: 'l5', pitch: 50, yaw: 160, ring: 'lower40'},
+  {id: 'l6', pitch: 50, yaw: 200, ring: 'lower40'},
+  {id: 'l7', pitch: 50, yaw: 240, ring: 'lower40'},
+  {id: 'l8', pitch: 50, yaw: 280, ring: 'lower40'},
+  {id: 'l9', pitch: 50, yaw: 320, ring: 'lower40'},
 
-  {id: 'l60_1', pitch: 30, yaw: 0, ring: 'lower60'},
-  {id: 'l60_2', pitch: 30, yaw: 72, ring: 'lower60'},
-  {id: 'l60_3', pitch: 30, yaw: 144, ring: 'lower60'},
-  {id: 'l60_4', pitch: 30, yaw: 216, ring: 'lower60'},
-  {id: 'l60_5', pitch: 30, yaw: 288, ring: 'lower60'},
-
+  // --- NADIR (Pitch 0°) - 1 Photo ---
   {id: 'bottom', pitch: 0, yaw: 0, ring: 'nadir'},
 ];
-// Total: 1 + 5 + 6 + 8 + 6 + 5 + 1 = 32 photos
-// Vertical spacing: 30° between each ring
-// Overlap: ~50% vertical, 25-44% horizontal
+// Total: 1 + 9 + 12 + 9 + 1 = 32 photos
+// Optimized for Portrait orientation (45° H, 60° V)
+// Vertical overlapping ~20° to 30°, Horizontal overlapping at least 15°

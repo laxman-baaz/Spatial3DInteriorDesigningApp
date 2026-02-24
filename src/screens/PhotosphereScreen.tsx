@@ -26,8 +26,8 @@ import {savePanorama, dataUrlToBase64} from '../services/panoramaStorage';
 const {width, height} = Dimensions.get('window');
 const VIEWFINDER_WIDTH = width * 0.8;
 const VIEWFINDER_HEIGHT = height * 0.7;
-const FOV_H = 60;
-const FOV_V = 45;
+const FOV_H = 45; // Portrait narrower horizontal FOV
+const FOV_V = 60; // Portrait wider vertical FOV
 const ALIGN_THRESHOLD_PX = 20;
 /** Must hold the dot aligned for this long (ms) before auto-capture */
 const ALIGN_HOLD_MS = 1000;
