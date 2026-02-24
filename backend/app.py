@@ -79,6 +79,7 @@ async def stitch(
 
     pitches = [float(p["pitch"]) for p in poses]
     yaws = [float(p["yaw"]) for p in poses]
+    rolls = [float(p.get("roll", 0.0)) for p in poses] # Default 0 for backwards compatibility
 
     tmp_dir = Path(tempfile.mkdtemp())
     paths = []
@@ -94,6 +95,7 @@ async def stitch(
             paths,
             pitches,
             yaws,
+            rolls,
             output_width=output_width,
             fov_h_deg=FOV_H_DEG,
             fov_v_deg=FOV_V_DEG,

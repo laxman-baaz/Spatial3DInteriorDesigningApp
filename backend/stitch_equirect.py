@@ -12,8 +12,8 @@ import numpy as np
 import cv2
 
 DEG2RAD = np.pi / 180
-FOV_H_DEG = 60.0
-FOV_V_DEG = 45.0
+FOV_H_DEG = 45.0  # Portrait FOV: narrower horizontally
+FOV_V_DEG = 60.0  # Portrait FOV: wider vertically
 
 
 def uv_to_direction(u: np.ndarray, v: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -43,7 +43,7 @@ def _camera_look_direction(pitch_deg: float, yaw_deg: float) -> tuple[float, flo
 
 def direction_to_rectilinear(
     dx: np.ndarray, dy: np.ndarray, dz: np.ndarray,
-    pitch_deg: float, yaw_deg: float,
+    pitch_deg: float, yaw_deg: float, roll_deg: float,
     fov_h_deg: float, fov_v_deg: float
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """World directions (dx,dy,dz) -> camera rectilinear (x, y) in [-1,1]; mask in_frame.
@@ -62,6 +62,27 @@ def direction_to_rectilinear(
     if unorm < 1e-9:
         unorm = 1e-9
     ux, uy, uz = ux / unorm, uy / unorm, uz / unorm
+
+    # Apply Roll Rotation around the Look axis (L)
+    # Rotating Right and Up vectors around L by roll_deg
+    roll_rad = roll_deg * DEG2RAD
+    cr = np.cos(roll_rad)
+    sr = np.sin(roll_rad)
+    
+    # New Right = Right * cos(roll) + Up * sin(roll)
+    rx_new = rx * cr + ux * sr
+    ry_new = ry * cr + uy * sr
+    rz_new = rz * cr + uz * sr
+    
+    # New Up = Up * cos(roll) - Right * sin(roll)
+    ux_new = ux * cr - rx * sr
+    uy_new = uy * cr - ry * sr
+    uz_new = uz * cr - rz * sr
+
+    # Re-assign rotated basis
+    rx, ry, rz = rx_new, ry_new, rz_new
+    ux, uy, uz = ux_new, uy_new, uz_new
+
     # Depth = dot(L, d); in front when depth > 0
     depth = lx * dx + ly * dy + lz * dz
     in_front = depth > 1e-6
@@ -131,6 +152,7 @@ def stitch_equirectangular(
     image_paths: list[str],
     pitches_deg: list[float],
     yaws_deg: list[float],
+    rolls_deg: list[float],
     output_width: int = 4096,
     fov_h_deg: float = FOV_H_DEG,
     fov_v_deg: float = FOV_V_DEG,
@@ -143,8 +165,8 @@ def stitch_equirectangular(
     Returns BGR image of shape (output_height, output_width, 3).
     """
     seen = set()
-    paths, pitches, yaws = [], [], []
-    for path, p, y in zip(image_paths, pitches_deg, yaws_deg):
+    paths, pitches, yaws, rolls = [], [], [], []
+    for path, p, y, r in zip(image_paths, pitches_deg, yaws_deg, rolls_deg):
         key = path.replace("\\", "/").rstrip("/")
         if key in seen:
             continue
@@ -152,6 +174,7 @@ def stitch_equirectangular(
         paths.append(path)
         pitches.append(p)
         yaws.append(y)
+        rolls.append(r)
     if not paths:
         raise ValueError("No images after deduplication")
 
@@ -182,12 +205,12 @@ def stitch_equirectangular(
     out_acc = np.zeros((out_h, out_w, 3), dtype=np.float64)
     out_weight = np.zeros((out_h, out_w), dtype=np.float64)
 
-    for path, pitch_deg, yaw_deg in zip(paths, pitches, yaws):
+    for path, pitch_deg, yaw_deg, roll_deg in zip(paths, pitches, yaws, rolls):
         im = cv2.imread(path)
         if im is None:
             raise FileNotFoundError(f"Cannot read image: {path}")
         x_norm, y_norm, in_frame = direction_to_rectilinear(
-            dx, dy, dz, pitch_deg, yaw_deg, fov_h_deg, fov_v_deg
+            dx, dy, dz, pitch_deg, yaw_deg, roll_deg, fov_h_deg, fov_v_deg
         )
         sampled = sample_rectilinear_grid(im, x_norm, y_norm)
         dist = np.maximum(np.abs(x_norm), np.abs(y_norm))
@@ -204,12 +227,15 @@ def stitch_and_save(
     image_paths: list[str],
     pitches_deg: list[float],
     yaws_deg: list[float],
-    output_path: str,
+    rolls_deg: list[float] | None = None,
+    output_path: str = "pano.jpg",
     output_width: int = 4096,
 ) -> str:
     """Stitch and write panorama to output_path. Returns output_path."""
+    if rolls_deg is None:
+        rolls_deg = [0.0] * len(image_paths)
     out = stitch_equirectangular(
-        image_paths, pitches_deg, yaws_deg, output_width=output_width
+        image_paths, pitches_deg, yaws_deg, rolls_deg, output_width=output_width
     )
     cv2.imwrite(output_path, out)
     return output_path

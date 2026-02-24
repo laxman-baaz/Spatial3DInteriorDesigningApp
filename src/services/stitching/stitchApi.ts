@@ -2,7 +2,7 @@
  * Call the Python/OpenCV backend POST /stitch to create equirectangular panorama.
  * Uses react-native-blob-util so we get response as base64 for saving locally.
  */
-import { getStitchApiUrl } from '../../config';
+import {getStitchApiUrl} from '../../config';
 import ReactNativeBlobUtil from 'react-native-blob-util';
 
 const LOG_TAG = '[StitchAPI]';
@@ -20,6 +20,7 @@ export interface StitchApiImage {
   path: string; // file://... or absolute path
   pitch: number;
   yaw: number;
+  roll: number;
 }
 
 /**
@@ -27,14 +28,16 @@ export interface StitchApiImage {
  */
 export async function stitchPanoramaViaApi(
   images: StitchApiImage[],
-  options: { outputWidth?: number; forceFull360?: boolean } = {}
+  options: {outputWidth?: number; forceFull360?: boolean} = {},
 ): Promise<StitchApiResult> {
   const start = Date.now();
   const outputWidth = options.outputWidth ?? 4096;
   const forceFull360 = options.forceFull360 ?? false;
   const url = getStitchApiUrl('/stitch');
 
-  console.log(`${LOG_TAG} Calling POST ${url} with ${images.length} image(s), outputWidth=${outputWidth}, forceFull360=${forceFull360}`);
+  console.log(
+    `${LOG_TAG} Calling POST ${url} with ${images.length} image(s), outputWidth=${outputWidth}, forceFull360=${forceFull360}`,
+  );
 
   if (images.length < 1) {
     console.log(`${LOG_TAG} Abort: no images`);
@@ -45,12 +48,14 @@ export async function stitchPanoramaViaApi(
     };
   }
 
-  const posesJson = JSON.stringify(images.map((img) => ({ pitch: img.pitch, yaw: img.yaw })));
+  const posesJson = JSON.stringify(
+    images.map(img => ({pitch: img.pitch, yaw: img.yaw, roll: img.roll})),
+  );
 
   const body = [
-    { name: 'poses_json', data: posesJson },
-    { name: 'output_width', data: String(outputWidth) },
-    { name: 'force_full_360', data: forceFull360 ? 'true' : 'false' },
+    {name: 'poses_json', data: posesJson},
+    {name: 'output_width', data: String(outputWidth)},
+    {name: 'force_full_360', data: forceFull360 ? 'true' : 'false'},
     ...images.map((img, i) => ({
       name: 'images',
       filename: `img_${i}.jpg`,
@@ -60,16 +65,25 @@ export async function stitchPanoramaViaApi(
   ];
 
   try {
-    const response = await ReactNativeBlobUtil.fetch('POST', url, {
-      'Content-Type': 'multipart/form-data',
-    }, body);
+    const response = await ReactNativeBlobUtil.fetch(
+      'POST',
+      url,
+      {
+        'Content-Type': 'multipart/form-data',
+      },
+      body,
+    );
 
     const status = response.respInfo?.status ?? 0;
     const headers = response.respInfo?.headers || {};
     const panoramaId = headers['X-Panorama-Id'] ?? headers['x-panorama-id'];
     const serverPath = headers['X-Panorama-Path'] ?? headers['x-panorama-path'];
 
-    console.log(`${LOG_TAG} Response status=${status}, panoramaId=${panoramaId ?? 'n/a'}, serverPath=${serverPath ?? 'n/a'}`);
+    console.log(
+      `${LOG_TAG} Response status=${status}, panoramaId=${
+        panoramaId ?? 'n/a'
+      }, serverPath=${serverPath ?? 'n/a'}`,
+    );
 
     if (status < 200 || status >= 300) {
       let errBody = '';
@@ -77,7 +91,8 @@ export async function stitchPanoramaViaApi(
         if (typeof response.text === 'function') {
           const result = response.text();
           errBody =
-            result != null && typeof (result as Promise<string>).then === 'function'
+            result != null &&
+            typeof (result as Promise<string>).then === 'function'
               ? await (result as Promise<string>)
               : String(result ?? '');
         }
@@ -98,19 +113,26 @@ export async function stitchPanoramaViaApi(
       const b64 = response.base64?.();
       if (typeof b64 === 'string') {
         base64Str = b64;
-      } else if (b64 != null && typeof (b64 as Promise<string>).then === 'function') {
+      } else if (
+        b64 != null &&
+        typeof (b64 as Promise<string>).then === 'function'
+      ) {
         base64Str = await (b64 as Promise<string>);
       }
       if (base64Str) {
         imageData = `data:image/jpeg;base64,${base64Str}`;
-        console.log(`${LOG_TAG} Got response base64, length=${base64Str.length}`);
+        console.log(
+          `${LOG_TAG} Got response base64, length=${base64Str.length}`,
+        );
       } else {
         const path = response.path?.();
         if (path) {
           base64Str = await ReactNativeBlobUtil.fs.readFile(path, 'base64');
           if (base64Str != null) {
             imageData = `data:image/jpeg;base64,${base64Str}`;
-            console.log(`${LOG_TAG} Read response from path, base64 length=${base64Str.length}`);
+            console.log(
+              `${LOG_TAG} Read response from path, base64 length=${base64Str.length}`,
+            );
           }
         }
       }
@@ -119,11 +141,15 @@ export async function stitchPanoramaViaApi(
     }
 
     if (!imageData) {
-      console.log(`${LOG_TAG} imageData is missing - panorama will NOT be saved to Recent Projects`);
+      console.log(
+        `${LOG_TAG} imageData is missing - panorama will NOT be saved to Recent Projects`,
+      );
     }
 
     const durationMs = Date.now() - start;
-    console.log(`${LOG_TAG} Success in ${durationMs}ms, hasImageData=${!!imageData}`);
+    console.log(
+      `${LOG_TAG} Success in ${durationMs}ms, hasImageData=${!!imageData}`,
+    );
 
     return {
       success: true,

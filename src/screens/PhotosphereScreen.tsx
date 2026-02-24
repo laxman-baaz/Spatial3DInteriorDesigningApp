@@ -21,10 +21,7 @@ import MaskedView from '@react-native-masked-view/masked-view';
 import {project3DTo2D} from '../utils/projection';
 import {TARGET_DOTS} from '../sphereConfig';
 import {stitchPanoramaViaApi} from '../services/stitching/stitchApi';
-import {
-  savePanorama,
-  dataUrlToBase64,
-} from '../services/panoramaStorage';
+import {savePanorama, dataUrlToBase64} from '../services/panoramaStorage';
 
 const {width, height} = Dimensions.get('window');
 const VIEWFINDER_WIDTH = width * 0.8;
@@ -66,6 +63,7 @@ const PhotosphereScreen = () => {
     yaw: number;
     captured: boolean;
     imagePath: string | null;
+    roll: number | null;
   }> => {
     return TARGET_DOTS.map((dot, index) => ({
       id: index + 1,
@@ -73,6 +71,7 @@ const PhotosphereScreen = () => {
       yaw: dot.yaw,
       captured: false,
       imagePath: null,
+      roll: null,
     }));
   };
 
@@ -83,7 +82,9 @@ const PhotosphereScreen = () => {
   const allCaptured = capturedCount === totalDots;
   const hasLoggedAllCaptured = React.useRef(false);
   const alignedPointIdRef = React.useRef<number | null>(null);
-  const holdTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const holdTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
 
   // Reset orientation on mount to establishing "Zero"
   useEffect(() => {
@@ -124,15 +125,15 @@ const PhotosphereScreen = () => {
 
     const cx = width / 2;
     const cy = height / 2;
-    const projectionParams = { width, height, fovH: FOV_H, fovV: FOV_V };
+    const projectionParams = {width, height, fovH: FOV_H, fovV: FOV_V};
 
     // Find the dot closest to center that is within threshold (actual aim, not first in list)
-    let best: { point: (typeof uncapturedPoints)[0]; dist: number } | null = null;
+    let best: {point: (typeof uncapturedPoints)[0]; dist: number} | null = null;
     for (const point of uncapturedPoints) {
       const {x, y} = project3DTo2D(point, orientation, projectionParams);
       const dist = Math.sqrt(Math.pow(x - cx, 2) + Math.pow(y - cy, 2));
       if (dist < ALIGN_THRESHOLD_PX && (best == null || dist < best.dist)) {
-        best = { point, dist };
+        best = {point, dist};
       }
     }
 
@@ -145,7 +146,7 @@ const PhotosphereScreen = () => {
       return;
     }
 
-    const { point } = best;
+    const {point} = best;
     if (alignedPointIdRef.current === point.id) {
       // Still on same dot; timer already running, do nothing
       return;
@@ -174,11 +175,16 @@ const PhotosphereScreen = () => {
         });
         console.log(`Captured point ${id}:`, photo.path);
 
-        // Mark as captured
+        // Mark as captured, save current physical roll
         setPoints(prev =>
           prev.map(p =>
             p.id === id
-              ? {...p, captured: true, imagePath: `file://${photo.path}`}
+              ? {
+                  ...p,
+                  captured: true,
+                  imagePath: `file://${photo.path}`,
+                  roll: orientation.roll,
+                }
               : p,
           ),
         );
@@ -200,10 +206,17 @@ const PhotosphereScreen = () => {
     if (isStitching) return;
     const withPaths = points.filter(p => p.captured && p.imagePath);
     if (withPaths.length === 0) {
-      Alert.alert('No images', 'Capture at least one dot to create a panorama.');
+      Alert.alert(
+        'No images',
+        'Capture at least one dot to create a panorama.',
+      );
       return;
     }
-    console.log('[Photosphere] Stitch: sending', withPaths.length, 'images to API');
+    console.log(
+      '[Photosphere] Stitch: sending',
+      withPaths.length,
+      'images to API',
+    );
     setIsStitching(true);
     try {
       const result = await stitchPanoramaViaApi(
@@ -211,8 +224,9 @@ const PhotosphereScreen = () => {
           path: p.imagePath!,
           pitch: p.pitch,
           yaw: p.yaw,
+          roll: p.roll ?? 0,
         })),
-        { outputWidth: 4096, forceFull360: true }
+        {outputWidth: 4096, forceFull360: true},
       );
       console.log('[Photosphere] Stitch result:', {
         success: result.success,
@@ -223,9 +237,16 @@ const PhotosphereScreen = () => {
       });
       if (result.success) {
         const id = result.panoramaId ?? `pano_${Date.now()}`;
-        const base64 = result.imageData ? dataUrlToBase64(result.imageData) : null;
+        const base64 = result.imageData
+          ? dataUrlToBase64(result.imageData)
+          : null;
         if (base64) {
-          console.log('[Photosphere] Saving panorama locally, id=', id, 'base64Len=', base64.length);
+          console.log(
+            '[Photosphere] Saving panorama locally, id=',
+            id,
+            'base64Len=',
+            base64.length,
+          );
           await savePanorama(id, base64);
           console.log('[Photosphere] Panorama saved to storage');
         } else {
@@ -239,7 +260,9 @@ const PhotosphereScreen = () => {
           'Panorama ready',
           base64
             ? `Saved to Recent Projects & 3D Gallery.${time}`
-            : `Stitched successfully.${time}${result.panoramaId ? `\nID: ${result.panoramaId}` : ''}`
+            : `Stitched successfully.${time}${
+                result.panoramaId ? `\nID: ${result.panoramaId}` : ''
+              }`,
         );
       } else {
         Alert.alert('Stitching failed', result.error ?? 'Unknown error');
@@ -248,7 +271,7 @@ const PhotosphereScreen = () => {
       console.error('[Photosphere] Stitch error:', e);
       Alert.alert(
         'Stitching failed',
-        e instanceof Error ? e.message : String(e)
+        e instanceof Error ? e.message : String(e),
       );
     } finally {
       setIsStitching(false);
@@ -308,7 +331,9 @@ const PhotosphereScreen = () => {
 
       {/* Progress HUD */}
       <View style={styles.hud}>
-        <Text style={styles.hudText}>{capturedCount} / {totalDots}</Text>
+        <Text style={styles.hudText}>
+          {capturedCount} / {totalDots}
+        </Text>
       </View>
 
       {/* Create panorama — always visible; uses all captured images (1–32) */}
