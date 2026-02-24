@@ -27,7 +27,7 @@ export const useDeviceOrientation = () => {
     yaw: 0,
   });
   // Refs for sensor fusion
-  const lastAccel = useRef({pitch: 0, roll: 0});
+  const lastAccel = useRef({pitch: 0, roll: 0, gx: 0, gy: 1, gz: 0});
   const lastTimestamp = useRef<number>(0);
 
   useEffect(() => {
@@ -40,14 +40,21 @@ export const useDeviceOrientation = () => {
       // X = Horizontal/Right, Y = Vertical/Up, Z = Depth/Out
 
       // Pitch: Rotation around X-axis.
-      // Flat on table (Z=9.8, Y=0) -> Pitch = 0?
+      // Flat on table screenside up (Z=9.8, Y=0) -> Pitch = 0.
       // Upright (Y=9.8, Z=0) -> Pitch = PI/2 (90 deg).
+      // Flat face down (Zenith aim) (Z=-9.8, Y=0) -> Pitch = PI (180 deg) or -PI.
       const p = Math.atan2(y, z);
 
       // Roll: Rotation around Y-axis.
       const r = Math.atan2(-x, Math.sqrt(y * y + z * z));
 
-      lastAccel.current = {pitch: p, roll: r};
+      // Reconstruct gravity unit vector for true yaw integration
+      const gLen = Math.sqrt(x * x + y * y + z * z);
+      const gx = gLen > 0 ? x / gLen : 0;
+      const gy = gLen > 0 ? y / gLen : 1;
+      const gz = gLen > 0 ? z / gLen : 0;
+
+      lastAccel.current = {pitch: p, roll: r, gx, gy, gz};
     });
 
     const subscriptionGyro = gyroscope.subscribe(({x, y, z, timestamp}) => {
@@ -64,29 +71,44 @@ export const useDeviceOrientation = () => {
       // Y: Vertical (Up)
       // Z: Depth (Out of screen)
 
-      // Pitch: Rotation around X-axis (Looking Up/Down). Correctly uses gyro 'x'.
-      // Roll: Rotation around Z-axis (Tilting Left/Right). Should use gyro 'z'.
-      // Yaw: Rotation around Y-axis (Turning Left/Right). Should use gyro 'y'.
-
       const current = currentOrientation.current;
 
-      // Pitch Fusion (Around X)
+      // --- Pitch Fusion (Around X) ---
       const gyroPitchStep = current.pitch + x * dt;
-      const fusedPitch =
-        ALPHA * gyroPitchStep + (1 - ALPHA) * lastAccel.current.pitch;
+      let accelPitch = lastAccel.current.pitch;
 
-      // Roll Fusion (Around Z mechanism - Tilt)
-      // Previously using 'y' (which is Yaw rate). Switching to 'z' (Roll rate).
+      // Unwrap accelPitch so it's closest to the gyro-integrated pitch
+      // This prevents violent +-PI jumps when pitching past Zenith (180 deg)
+      while (accelPitch - gyroPitchStep > Math.PI) accelPitch -= 2 * Math.PI;
+      while (accelPitch - gyroPitchStep < -Math.PI) accelPitch += 2 * Math.PI;
+
+      const fusedPitch = ALPHA * gyroPitchStep + (1 - ALPHA) * accelPitch;
+
+      // --- Roll Fusion ---
       const gyroRollStep = current.roll + z * dt;
-      const fusedRoll =
-        ALPHA * gyroRollStep + (1 - ALPHA) * lastAccel.current.roll;
+      let accelRoll = lastAccel.current.roll;
 
-      // Yaw Fusion (Around Y mechanism - Panorama)
-      // Accumulate then wrap to [-π, π] so fast rotation doesn't cause opposite-side display
-      let fusedYaw = current.yaw + y * dt;
+      // Unwrap accelRoll
+      while (accelRoll - gyroRollStep > Math.PI) accelRoll -= 2 * Math.PI;
+      while (accelRoll - gyroRollStep < -Math.PI) accelRoll += 2 * Math.PI;
+
+      const fusedRoll = ALPHA * gyroRollStep + (1 - ALPHA) * accelRoll;
+
+      // --- Yaw Fusion (World Yaw around Gravity Vector) ---
+      // Instead of just taking 'y' (which is completely wrong when pointing up),
+      // we project the gyro angular velocity vector [x, y, z] onto the
+      // gravity unit vector [gx, gy, gz]. This gives the true rotation rate
+      // around the absolute vertical axis (Yaw rate) without Gimbal Lock!
+      const gx = lastAccel.current.gx;
+      const gy = lastAccel.current.gy;
+      const gz = lastAccel.current.gz;
+      const trueYawRate = x * gx + y * gy + z * gz;
+
+      // Accumulate then wrap to [-π, π]
+      let fusedYaw = current.yaw + trueYawRate * dt;
       const TWO_PI = 2 * Math.PI;
-      if (fusedYaw > Math.PI) fusedYaw -= TWO_PI;
-      if (fusedYaw < -Math.PI) fusedYaw += TWO_PI;
+      while (fusedYaw > Math.PI) fusedYaw -= TWO_PI;
+      while (fusedYaw < -Math.PI) fusedYaw += TWO_PI;
 
       currentOrientation.current = {
         pitch: fusedPitch,
