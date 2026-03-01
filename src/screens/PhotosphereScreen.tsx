@@ -205,10 +205,10 @@ const PhotosphereScreen = () => {
   const handleStitch = async () => {
     if (isStitching) return;
     const withPaths = points.filter(p => p.captured && p.imagePath);
-    if (withPaths.length === 0) {
+    if (withPaths.length < 2) {
       Alert.alert(
-        'No images',
-        'Capture at least one dot to create a panorama.',
+        'Not enough images',
+        'Capture at least 2 dots to create a panorama.',
       );
       return;
     }
@@ -220,13 +220,7 @@ const PhotosphereScreen = () => {
     setIsStitching(true);
     try {
       const result = await stitchPanoramaViaApi(
-        withPaths.map(p => ({
-          path: p.imagePath!,
-          pitch: p.pitch,
-          yaw: p.yaw,
-          roll: p.roll ?? 0,
-        })),
-        {outputWidth: 4096, forceFull360: true},
+        withPaths.map(p => ({path: p.imagePath!})),
       );
       console.log('[Photosphere] Stitch result:', {
         success: result.success,

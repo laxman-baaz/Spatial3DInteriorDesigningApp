@@ -12,7 +12,6 @@ Environment variables (set in backend/.env):
   IMGBB_API_KEY       – from https://imgbb.com
   WORLDLABS_API_KEY   – from https://platform.worldlabs.ai/api-keys
 """
-import json
 import os
 import tempfile
 import uuid
@@ -29,7 +28,7 @@ import cv2
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response
 
-from stitch_equirect import stitch_equirectangular, FOV_H_DEG, FOV_V_DEG
+from stitch_equirect import stitch_panorama
 from nanobanana import stage_panorama as nb_stage_panorama
 from worldlabs import reconstruct_world, WorldResult
 
@@ -51,35 +50,14 @@ def root():
 
 @app.post("/stitch")
 async def stitch(
-    images: list[UploadFile] = File(..., description="Images in TARGET_DOTS order (1–32 or more)"),
-    poses_json: str = Form(
-        ...,
-        description='JSON array of {"pitch": deg, "yaw": deg} for each image, same order',
-    ),
-    output_width: int = Form(4096, description="Equirectangular width (height = width/2)"),
-    force_full_360: bool = Form(False, description="If true, output always 360×180 (2:1) for e.g. WorldLabs 3D; uncaptured areas black"),
+    images: list[UploadFile] = File(..., description="Clicked images to stitch (min 2)"),
 ):
     """
-    Upload images and their poses; returns stitched equirectangular panorama as JPEG.
-    Use 1 to 32+ images; partial coverage is allowed. Poses: pitch 0=nadir, 90=horizon,
-    180=zenith; yaw 0..360 (degrees). Set force_full_360=true for 3D export (WorldLabs).
+    Upload clicked images; returns stitched 360° panorama as JPEG.
+    Uses OpenCV Stitcher (prepare_image, crop black borders, 2:1 equirectangular). No poses.
     """
-    try:
-        poses = json.loads(poses_json)
-    except json.JSONDecodeError as e:
-        raise HTTPException(status_code=400, detail=f"Invalid poses_json: {e}")
-
-    if len(images) < 1:
-        raise HTTPException(status_code=400, detail="At least 1 image required")
-    if len(images) != len(poses):
-        raise HTTPException(
-            status_code=400,
-            detail=f"Image count ({len(images)}) must match pose count ({len(poses)})",
-        )
-
-    pitches = [float(p["pitch"]) for p in poses]
-    yaws = [float(p["yaw"]) for p in poses]
-    rolls = [float(p.get("roll", 0.0)) for p in poses] # Default 0 for backwards compatibility
+    if len(images) < 2:
+        raise HTTPException(status_code=400, detail="At least 2 images required to stitch")
 
     tmp_dir = Path(tempfile.mkdtemp())
     paths = []
@@ -91,16 +69,10 @@ async def stitch(
             path.write_bytes(content)
             paths.append(str(path))
 
-        out_img = stitch_equirectangular(
-            paths,
-            pitches,
-            yaws,
-            rolls,
-            output_width=output_width,
-            fov_h_deg=FOV_H_DEG,
-            fov_v_deg=FOV_V_DEG,
-            force_full_360=force_full_360,
-        )
+        try:
+            out_img = stitch_panorama(paths)
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e))
 
         # Encode to JPEG
         _, jpeg_buf = cv2.imencode(".jpg", out_img)

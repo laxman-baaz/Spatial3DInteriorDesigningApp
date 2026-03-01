@@ -17,52 +17,35 @@ export interface StitchApiResult {
 }
 
 export interface StitchApiImage {
-  path: string; // file://... or absolute path
-  pitch: number;
-  yaw: number;
-  roll: number;
+  path: string; // file://... or absolute path (pitch/yaw/roll no longer sent)
 }
 
 /**
- * Upload images + poses to backend; returns stitched panorama result.
+ * Upload clicked images to backend; returns stitched 360° panorama (OpenCV Stitcher, no poses).
  */
 export async function stitchPanoramaViaApi(
   images: StitchApiImage[],
-  options: {outputWidth?: number; forceFull360?: boolean} = {},
 ): Promise<StitchApiResult> {
   const start = Date.now();
-  const outputWidth = options.outputWidth ?? 4096;
-  const forceFull360 = options.forceFull360 ?? false;
   const url = getStitchApiUrl('/stitch');
 
-  console.log(
-    `${LOG_TAG} Calling POST ${url} with ${images.length} image(s), outputWidth=${outputWidth}, forceFull360=${forceFull360}`,
-  );
+  console.log(`${LOG_TAG} Calling POST ${url} with ${images.length} image(s)`);
 
-  if (images.length < 1) {
-    console.log(`${LOG_TAG} Abort: no images`);
+  if (images.length < 2) {
+    console.log(`${LOG_TAG} Abort: need at least 2 images`);
     return {
       success: false,
-      error: 'Capture at least one image to create a panorama',
+      error: 'Capture at least 2 images to create a panorama',
       durationMs: Date.now() - start,
     };
   }
 
-  const posesJson = JSON.stringify(
-    images.map(img => ({pitch: img.pitch, yaw: img.yaw, roll: img.roll})),
-  );
-
-  const body = [
-    {name: 'poses_json', data: posesJson},
-    {name: 'output_width', data: String(outputWidth)},
-    {name: 'force_full_360', data: forceFull360 ? 'true' : 'false'},
-    ...images.map((img, i) => ({
-      name: 'images',
-      filename: `img_${i}.jpg`,
-      type: 'image/jpeg',
-      data: ReactNativeBlobUtil.wrap(img.path.replace(/^file:\/\//, '')),
-    })),
-  ];
+  const body = images.map((img, i) => ({
+    name: 'images',
+    filename: `img_${i}.jpg`,
+    type: 'image/jpeg',
+    data: ReactNativeBlobUtil.wrap(img.path.replace(/^file:\/\//, '')),
+  }));
 
   try {
     const response = await ReactNativeBlobUtil.fetch(
