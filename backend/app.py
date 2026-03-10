@@ -29,7 +29,12 @@ import cv2
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response
 
-from stitch_equirect import stitch_equirectangular, FOV_H_DEG, FOV_V_DEG
+from stitch_equirect import (
+    stitch_equirectangular,
+    undistort_panorama,
+    FOV_H_DEG,
+    FOV_V_DEG,
+)
 from nanobanana import stage_panorama as nb_stage_panorama
 from worldlabs import reconstruct_world, WorldResult
 
@@ -100,6 +105,19 @@ async def stitch(
             fov_h_deg=FOV_H_DEG,
             fov_v_deg=FOV_V_DEG,
             force_full_360=force_full_360,
+            winner_takes_all=False,  # soft blend → smooth seams, no hard rectangular borders
+            edge_cutoff=0.85,        # 45° FOV + 30° spacing = only 15° overlap — need wide cutoff to fill seams
+            blend_softness=4.0,      # power-4 falloff: center wins but edges still contribute enough to fill gaps
+        )
+
+        # Light post-stitch pass — correct FOV (45/60) means geometry is already close to right.
+        # balance=0.8 keeps most of the frame without aggressive cropping.
+        out_img = undistort_panorama(
+            out_img,
+            camera_matrix=None,
+            dist_coeffs=None,
+            use_fisheye=True,
+            balance=0.8,
         )
 
         # Encode to JPEG
@@ -171,9 +189,13 @@ async def stage(
     try:
         staged_bytes = nb_stage_panorama(image_bytes, prompt, nb_key, imgbb_key)
     except TimeoutError as e:
+        print(f"[/stage] TIMEOUT: {e}")
         raise HTTPException(status_code=504, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Staging failed: {e}")
+        import traceback
+        print(f"[/stage] ERROR: {type(e).__name__}: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Staging failed: {type(e).__name__}: {e}")
 
     # Persist the staged panorama alongside stitched ones
     staged_id = str(uuid.uuid4())

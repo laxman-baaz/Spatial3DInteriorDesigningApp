@@ -98,5 +98,5 @@ export const TARGET_DOTS: TargetDot[] = [
   {id: 'bottom', pitch: 0, yaw: 0, ring: 'nadir'},
 ];
 // Total: 1 + 9 + 12 + 9 + 1 = 32 photos
-// Optimized for Portrait orientation (45° H, 60° V)
-// Vertical overlapping ~20° to 30°, Horizontal overlapping at least 15°
+// Optimized for Portrait orientation — FOV_H=68°, FOV_V=85° (modern phone main camera)
+// Vertical ring spacing 40° → ~45° vertical overlap. Horizontal spacing 30–40° → ~28–38° horizontal overlap.
