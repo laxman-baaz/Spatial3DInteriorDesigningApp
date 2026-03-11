@@ -55,8 +55,8 @@ const PhotosphereScreen = () => {
   const {reset, ...orientation} = useDeviceOrientation();
   const [isCapturing, setIsCapturing] = useState(false);
 
-  // 32-DOT complete sphere coverage (7 rings, 30° vertical spacing)
-  // From sphereConfig: Pitch 90° = Horizon, 180° = Zenith, 0° = Nadir
+  // 27-DOT layout: 3 rings × 9 dots, all aligned yaw (0,40,80…320°)
+  // upper pitch=135°  center pitch=90°  lower pitch=45°  — from sphereConfig
   const generatePoints = (): Array<{
     id: number;
     pitch: number;
@@ -78,7 +78,7 @@ const PhotosphereScreen = () => {
   const [points, setPoints] = useState(generatePoints());
   const [isStitching, setIsStitching] = useState(false);
   const capturedCount = points.filter(p => p.captured).length;
-  const totalDots = TARGET_DOTS.length; // 22 (or 32 when switched)
+  const totalDots = TARGET_DOTS.length; // 27 (3 rings × 9)
   const allCaptured = capturedCount === totalDots;
   const hasLoggedAllCaptured = React.useRef(false);
   const alignedPointIdRef = React.useRef<number | null>(null);
@@ -336,7 +336,7 @@ const PhotosphereScreen = () => {
         </Text>
       </View>
 
-      {/* Create panorama — always visible; uses all captured images (1–32) */}
+      {/* Create panorama — always visible; uses all captured images (1–27) */}
       <TouchableOpacity
         style={[
           styles.stitchButton,

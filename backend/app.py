@@ -40,7 +40,7 @@ from worldlabs import reconstruct_world, WorldResult
 
 app = FastAPI(
     title="Panorama Stitcher",
-    description="Stitch 32-dot photosphere images into equirectangular panorama using OpenCV",
+    description="Stitch 27-dot photosphere images into equirectangular panorama using OpenCV",
     version="1.0.0",
 )
 
@@ -66,7 +66,7 @@ async def stitch(
 ):
     """
     Upload images and their poses; returns stitched equirectangular panorama as JPEG.
-    Use 1 to 32+ images; partial coverage is allowed. Poses: pitch 0=nadir, 90=horizon,
+    Use 1 to 27+ images; partial coverage is allowed. Poses: pitch 0=nadir, 90=horizon,
     180=zenith; yaw 0..360 (degrees). Set force_full_360=true for 3D export (WorldLabs).
     """
     try:
@@ -102,12 +102,23 @@ async def stitch(
             yaws,
             rolls,
             output_width=output_width,
-            fov_h_deg=FOV_H_DEG,
+            # fov_h_deg=60°: closer to real phone portrait camera FOV than the 45° alignment FOV.
+            #   Gives ±30° per image vs 22.5° spacing → 15° horizontal overlap per seam.
+            #   Without overlap, soft blending has nothing to feather across → visible "box" edges.
+            # winner_takes_all=False: weighted average blend in the overlap zone — each pixel is a
+            #   smooth mix of whichever images cover it, weighted by distance-from-centre.
+            #   Eliminates the hard rectangular "photo pasted on sphere" look.
+            # edge_cutoff=0.85: discard the outer 15% of each frame (most distorted corners).
+            #   With fov_h_deg=60°: effective half-FOV = 30°×0.85 = 25.5° → coverage = 51° → 6° overlap ✓
+            # blend_softness=2.0: power-2 falloff gives a smooth Gaussian-like fade at edges.
+            fov_h_deg=FOV_H_DEG + 15.0,
             fov_v_deg=FOV_V_DEG,
             force_full_360=force_full_360,
-            winner_takes_all=False,  # soft blend → smooth seams, no hard rectangular borders
-            edge_cutoff=0.85,        # 45° FOV + 30° spacing = only 15° overlap — need wide cutoff to fill seams
-            blend_softness=4.0,      # power-4 falloff: center wins but edges still contribute enough to fill gaps
+            winner_takes_all=False,
+            edge_cutoff=0.85,
+            blend_softness=2.0,
+            yaw_auto_correct=True,
+            num_columns=9,
         )
 
         # Light post-stitch pass — correct FOV (45/60) means geometry is already close to right.
