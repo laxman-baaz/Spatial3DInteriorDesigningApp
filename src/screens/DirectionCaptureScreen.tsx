@@ -141,8 +141,8 @@ export default function DirectionCaptureScreen({navigation, route}: any) {
           {capturedPaths.length} photo{capturedPaths.length !== 1 ? 's' : ''}
         </Text>
         <Text style={styles.hudHint}>
-          Capture {DIRECTION_LABELS[direction]}. Take 6–8 overlapping shots,
-          then tap Done.
+          Pan steadily left→right. Take 6–8 shots with ~30% overlap each, then
+          Done.
         </Text>
       </View>
 
