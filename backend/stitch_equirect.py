@@ -22,11 +22,11 @@ MAX_IMAGE_DIMENSION_MANY_IMAGES = 1000  # Smaller for 5+ images to avoid camera 
 MAX_IMAGES_FOR_FAST_MODE = 4
 STITCH_MODE = cv2.Stitcher_PANORAMA
 PANO_CONFIDENCE = 0.4  # Lower = more lenient for full 360°
-PANO_CONFIDENCE_WALL = 0.55  # Slightly stricter for flat walls to reduce bad matches
+PANO_CONFIDENCE_WALL = 0.4  # Lenient for walls so more content is included (fewer black gaps)
 
-# Wall output: flat image with this aspect ratio (width:height). E.g. (4, 3) = 4:3.
-WALL_ASPECT_RATIO = (4, 3)
-WALL_MAX_DIMENSION = 2000  # Max width or height of output
+# Wall output: keep natural proportions (no forced aspect ratio) to avoid squeezing + black padding.
+WALL_MAX_DIMENSION = 2000  # Max width or height of output; scale down if larger
+WALL_INPAINT_RADIUS = 5  # Inpaint small black gaps from stitching (0 = disabled)
 
 
 def _normalize_exposure(img: np.ndarray) -> np.ndarray:
@@ -79,46 +79,33 @@ def crop_black_borders(image: np.ndarray) -> np.ndarray:
     return crop_to_content(image)
 
 
-def enforce_aspect_ratio(
+def fill_black_gaps(
     image: np.ndarray,
-    target_w: int,
-    target_h: int,
-    max_dim: int = WALL_MAX_DIMENSION,
-    pad_color: tuple[int, int, int] = (0, 0, 0),
+    black_thresh: int = 25,
+    inpaint_radius: int = 5,
 ) -> np.ndarray:
     """
-    Resize image to fit within target aspect ratio (target_w:target_h), then pad to exact ratio.
-    Scales so no content is cropped; pads with pad_color to reach exact dimensions.
+    Fill small black gaps (stitching artifacts) using inpainting.
+    Only affects pixels darker than black_thresh. Use small radius to avoid blur.
     """
-    h, w = image.shape[:2]
-    if w <= 0 or h <= 0:
+    if inpaint_radius <= 0:
         return image
-    target_ratio = target_w / target_h
-    current_ratio = w / h
-    if current_ratio >= target_ratio:
-        # Image is wider or equal; fit to width, pad top/bottom
-        out_w = min(w, max_dim)
-        out_h = int(round(out_w / target_ratio))
-        scale = out_w / w
-        scaled_h = int(round(h * scale))
-        img_scaled = cv2.resize(image, (out_w, scaled_h), interpolation=cv2.INTER_LINEAR)
-        pad_top = (out_h - scaled_h) // 2
-        pad_bot = out_h - scaled_h - pad_top
-        return cv2.copyMakeBorder(
-            img_scaled, pad_top, pad_bot, 0, 0, cv2.BORDER_CONSTANT, value=pad_color
-        )
-    else:
-        # Image is taller; fit to height, pad left/right
-        out_h = min(h, max_dim)
-        out_w = int(round(out_h * target_ratio))
-        scale = out_h / h
-        scaled_w = int(round(w * scale))
-        img_scaled = cv2.resize(image, (scaled_w, out_h), interpolation=cv2.INTER_LINEAR)
-        pad_left = (out_w - scaled_w) // 2
-        pad_right = out_w - scaled_w - pad_left
-        return cv2.copyMakeBorder(
-            img_scaled, 0, 0, pad_left, pad_right, cv2.BORDER_CONSTANT, value=pad_color
-        )
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    mask = np.uint8((gray < black_thresh) * 255)
+    if mask.sum() == 0:
+        return image
+    return cv2.inpaint(image, mask, inpaint_radius, cv2.INPAINT_TELEA)
+
+
+def scale_to_max_dim(image: np.ndarray, max_dim: int = WALL_MAX_DIMENSION) -> np.ndarray:
+    """Scale down image if it exceeds max_dim on either axis; preserve aspect ratio."""
+    h, w = image.shape[:2]
+    if max(h, w) <= max_dim:
+        return image
+    scale = max_dim / max(h, w)
+    new_w = int(round(w * scale))
+    new_h = int(round(h * scale))
+    return cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
 
 
 def enforce_equirectangular(image: np.ndarray) -> np.ndarray:
@@ -127,6 +114,36 @@ def enforce_equirectangular(image: np.ndarray) -> np.ndarray:
     if h != target_h:
         image = cv2.resize(image, (w, target_h), interpolation=cv2.INTER_LINEAR)
     return image
+
+
+def concatenate_walls(image_paths: list[str]) -> np.ndarray | None:
+    """
+    Arrange 2–4 wall images horizontally into a panorama (N,E,S,W order).
+    Used when feature-based stitching fails (walls don't overlap).
+    """
+    if len(image_paths) < 2 or len(image_paths) > 4:
+        return None
+    images = []
+    for p in image_paths:
+        img = prepare_image(p, max_dim=MAX_IMAGE_DIMENSION)
+        if img is None or img.size == 0 or img.shape[0] <= 0 or img.shape[1] <= 0:
+            return None
+        images.append(np.ascontiguousarray(img.astype(np.uint8)))
+    if len(images) < 2:
+        return None
+    # Resize to common height (use min height to avoid stretching)
+    target_h = min(img.shape[0] for img in images)
+    resized = []
+    for img in images:
+        h, w = img.shape[:2]
+        scale = target_h / h
+        new_w = int(round(w * scale))
+        resized.append(
+            cv2.resize(img, (new_w, target_h), interpolation=cv2.INTER_LINEAR)
+        )
+    result = np.hstack(resized)
+    result = enforce_equirectangular(result)
+    return result
 
 
 def create_stitcher(
@@ -156,12 +173,18 @@ def stitch_panorama(image_paths: list[str], *, single_wall: bool = False) -> np.
     Stitch clicked images into panorama.
     Needs at least 2 images.
     - single_wall=False: full 360° output (crop black borders, enforce 2:1 equirectangular).
-    - single_wall=True: flat wall output — crop black borders, enforce WALL_ASPECT_RATIO (default 4:3).
+    - single_wall=True: flat wall output — crop to content, fill black gaps, keep natural proportions.
       Uses affine/SCANS mode first (better for flat walls), wave correction.
     Retries with smaller images, different modes, and reversed order if needed.
     """
     if len(image_paths) < 2:
         raise ValueError("Need at least 2 images to stitch")
+
+    # For 2–4 walls (N,E,S,W): use simple concatenation — feature stitcher fails (no overlap)
+    if not single_wall and 2 <= len(image_paths) <= 4:
+        concat = concatenate_walls(image_paths)
+        if concat is not None:
+            return concat
 
     scans_mode = getattr(cv2, "Stitcher_SCANS", 1)
 
@@ -204,26 +227,25 @@ def stitch_panorama(image_paths: list[str], *, single_wall: bool = False) -> np.
         conf = PANO_CONFIDENCE
         norm_exp = False
 
-    # Strategy for walls: try PANORAMA first (most stable), then SCANS; avoid exposure norm
-    # initially (CLAHE can trigger OpenCV setSize errors on some inputs)
+    # Strategy for walls: try SCANS first (affine, better for flat walls), then PANORAMA
     if single_wall:
-        # Try without exposure norm first — avoids OpenCV 4.10 setSize crash
+        # SCANS mode: affine transforms, better for planar wall surfaces
         status, result = _try_stitch(
-            image_paths, max_dim, mode=STITCH_MODE, confidence=conf, normalize_exposure=False
+            image_paths, max_dim, mode=scans_mode, confidence=conf, normalize_exposure=False
         )
         if status != cv2.Stitcher_OK:
             status, result = _try_stitch(
-                image_paths, max_dim, mode=scans_mode, confidence=conf, normalize_exposure=False
+                image_paths, max_dim, mode=STITCH_MODE, confidence=conf, normalize_exposure=False
             )
         # Try reversed order (pan direction can matter)
         if status != cv2.Stitcher_OK:
             rev = list(reversed(image_paths))
             status, result = _try_stitch(
-                rev, max_dim, mode=STITCH_MODE, confidence=conf, normalize_exposure=False
+                rev, max_dim, mode=scans_mode, confidence=conf, normalize_exposure=False
             )
         if status != cv2.Stitcher_OK:
             status, result = _try_stitch(
-                rev, max_dim, mode=scans_mode, confidence=conf, normalize_exposure=False
+                rev, max_dim, mode=STITCH_MODE, confidence=conf, normalize_exposure=False
             )
         # Last resort: with exposure normalization (can help color drift, but may crash on some)
         if status != cv2.Stitcher_OK:
@@ -268,8 +290,10 @@ def stitch_panorama(image_paths: list[str], *, single_wall: bool = False) -> np.
 
     result = crop_to_content(result)
     if single_wall:
-        tw, th = WALL_ASPECT_RATIO
-        result = enforce_aspect_ratio(result, tw, th)
+        # Keep natural proportions; fill small black gaps; scale down if too large
+        if WALL_INPAINT_RADIUS > 0:
+            result = fill_black_gaps(result, black_thresh=25, inpaint_radius=WALL_INPAINT_RADIUS)
+        result = scale_to_max_dim(result)
     else:
         result = enforce_equirectangular(result)
     return result

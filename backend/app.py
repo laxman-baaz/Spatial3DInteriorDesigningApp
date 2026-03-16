@@ -39,8 +39,12 @@ app = FastAPI(
 )
 
 # Optional: persist stitched panoramas under this dir (e.g. for AsyncStorage / cards)
-OUTPUT_DIR = Path(os.environ.get("PANORAMA_OUTPUT_DIR", tempfile.gettempdir()))
+# Default: backend/output/ so Walls/ is at backend/output/Walls/
+_DEFAULT_OUTPUT = Path(__file__).parent / "output"
+OUTPUT_DIR = Path(os.environ.get("PANORAMA_OUTPUT_DIR", str(_DEFAULT_OUTPUT)))
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+WALLS_DIR = OUTPUT_DIR / "Walls"
+WALLS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 @app.get("/")
@@ -52,6 +56,7 @@ def root():
 async def stitch(
     images: list[UploadFile] = File(..., description="Clicked images to stitch (min 2)"),
     single_wall: bool = Form(False, description="If true, output natural size for one side (no 360° enforce)"),
+    direction: str | None = Form(None, description="Wall direction (north/east/south/west) for single_wall mode; used in filename"),
 ):
     """
     Upload clicked images; returns stitched panorama as JPEG.
@@ -83,9 +88,12 @@ async def stitch(
         # Save: single_wall → Walls/, else → OUTPUT_DIR
         save_id = str(uuid.uuid4())
         if single_wall:
-            walls_dir = OUTPUT_DIR / "Walls"
-            walls_dir.mkdir(parents=True, exist_ok=True)
-            save_path = walls_dir / f"wall_{save_id}.jpg"
+            dir_label = (direction or "").strip().lower()
+            if dir_label and dir_label in ("north", "east", "south", "west"):
+                filename = f"wall_{dir_label}_{save_id}.jpg"
+            else:
+                filename = f"wall_{save_id}.jpg"
+            save_path = WALLS_DIR / filename
         else:
             save_path = OUTPUT_DIR / f"panorama_{save_id}.jpg"
         save_path.write_bytes(jpeg_bytes)

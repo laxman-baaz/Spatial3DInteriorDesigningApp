@@ -79,26 +79,27 @@ export default function FourDirectionCardsScreen({navigation, route}: any) {
     [navigation]
   );
 
-  const directionUris: Record<string, string> = {};
+  // Collect wall URIs in N→E→S→W order for 360° panorama
+  const wallUrisInOrder: string[] = [];
   for (const d of ORDER) {
     if (cards[d].status === 'done' && cards[d].imageUri) {
-      directionUris[d] = cards[d].imageUri!;
+      wallUrisInOrder.push(cards[d].imageUri!);
     }
   }
-  const allUris = Object.values(directionUris);
-  const canCreate = allUris.length >= 2;
+  const canCreate = wallUrisInOrder.length >= 2;
 
   const handleCreatePanorama = useCallback(async () => {
     if (!canCreate || isStitchingFinal) return;
-    if (allUris.length < 2) {
+    if (wallUrisInOrder.length < 2) {
       Alert.alert('Need more', 'Capture at least 2 walls.');
       return;
     }
     setIsStitchingFinal(true);
     try {
+      // Stitch 4 wall images into 360° equirectangular panorama (singleWall: false)
       const result = await stitchPanoramaViaApi(
-        allUris.map(uri => ({path: uri})),
-        {singleWall: true},
+        wallUrisInOrder.map(uri => ({path: uri})),
+        {singleWall: false},
       );
       if (result.success && result.imageData) {
         const id = result.panoramaId ?? `pano_${Date.now()}`;
@@ -132,7 +133,7 @@ export default function FourDirectionCardsScreen({navigation, route}: any) {
     } finally {
       setIsStitchingFinal(false);
     }
-  }, [canCreate, isStitchingFinal, allUris, navigation]);
+  }, [canCreate, isStitchingFinal, wallUrisInOrder, navigation]);
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>

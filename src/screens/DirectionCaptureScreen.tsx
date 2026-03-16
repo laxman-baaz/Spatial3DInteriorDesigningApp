@@ -69,7 +69,7 @@ export default function DirectionCaptureScreen({navigation, route}: any) {
     try {
       const result = await stitchPanoramaViaApi(
         capturedPaths.map(path => ({path})),
-        {singleWall: true},
+        {singleWall: true, direction},
       );
       if (result.success && result.imageData) {
         const base64 = dataUrlToBase64(result.imageData);

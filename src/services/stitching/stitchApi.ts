@@ -23,16 +23,18 @@ export interface StitchApiImage {
 /**
  * Upload clicked images to backend; returns stitched panorama.
  * @param singleWall - If true, output natural size for one wall (no 360° stretch). Use for per-wall capture.
+ * @param direction - Wall direction (north/east/south/west) for singleWall mode; backend saves to Walls/ with this in filename.
  */
 export async function stitchPanoramaViaApi(
   images: StitchApiImage[],
-  options?: {singleWall?: boolean},
+  options?: {singleWall?: boolean; direction?: string},
 ): Promise<StitchApiResult> {
   const start = Date.now();
   const url = getStitchApiUrl('/stitch');
   const singleWall = options?.singleWall ?? false;
+  const direction = options?.direction;
 
-  console.log(`${LOG_TAG} Calling POST ${url} with ${images.length} image(s), singleWall=${singleWall}`);
+  console.log(`${LOG_TAG} Calling POST ${url} with ${images.length} image(s), singleWall=${singleWall}, direction=${direction ?? 'n/a'}`);
 
   if (images.length < 2) {
     console.log(`${LOG_TAG} Abort: need at least 2 images`);
@@ -51,6 +53,9 @@ export async function stitchPanoramaViaApi(
       data: ReactNativeBlobUtil.wrap(img.path.replace(/^file:\/\//, '')),
     })),
     {name: 'single_wall', data: singleWall ? 'true' : 'false'},
+    ...(direction != null && direction !== ''
+      ? [{name: 'direction', data: direction}]
+      : []),
   ];
 
   try {
