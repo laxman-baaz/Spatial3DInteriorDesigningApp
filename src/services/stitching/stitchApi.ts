@@ -21,15 +21,18 @@ export interface StitchApiImage {
 }
 
 /**
- * Upload clicked images to backend; returns stitched 360° panorama (OpenCV Stitcher, no poses).
+ * Upload clicked images to backend; returns stitched panorama.
+ * @param singleWall - If true, output natural size for one wall (no 360° stretch). Use for per-wall capture.
  */
 export async function stitchPanoramaViaApi(
   images: StitchApiImage[],
+  options?: {singleWall?: boolean},
 ): Promise<StitchApiResult> {
   const start = Date.now();
   const url = getStitchApiUrl('/stitch');
+  const singleWall = options?.singleWall ?? false;
 
-  console.log(`${LOG_TAG} Calling POST ${url} with ${images.length} image(s)`);
+  console.log(`${LOG_TAG} Calling POST ${url} with ${images.length} image(s), singleWall=${singleWall}`);
 
   if (images.length < 2) {
     console.log(`${LOG_TAG} Abort: need at least 2 images`);
@@ -40,12 +43,15 @@ export async function stitchPanoramaViaApi(
     };
   }
 
-  const body = images.map((img, i) => ({
-    name: 'images',
-    filename: `img_${i}.jpg`,
-    type: 'image/jpeg',
-    data: ReactNativeBlobUtil.wrap(img.path.replace(/^file:\/\//, '')),
-  }));
+  const body = [
+    ...images.map((img, i) => ({
+      name: 'images',
+      filename: `img_${i}.jpg`,
+      type: 'image/jpeg',
+      data: ReactNativeBlobUtil.wrap(img.path.replace(/^file:\/\//, '')),
+    })),
+    {name: 'single_wall', data: singleWall ? 'true' : 'false'},
+  ];
 
   try {
     const response = await ReactNativeBlobUtil.fetch(
@@ -151,3 +157,4 @@ export async function stitchPanoramaViaApi(
     };
   }
 }
+

@@ -69,7 +69,7 @@ export default function HomeScreen({navigation}: any) {
         <View style={styles.actionContainer}>
           <TouchableOpacity
             style={styles.newScanCard}
-            onPress={() => navigation.navigate('Photosphere')}
+            onPress={() => navigation.navigate('FourDirectionCards')}
             activeOpacity={0.9}>
             <View style={styles.newScanContent}>
               <View style={styles.iconContainer}>

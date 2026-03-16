@@ -5,6 +5,8 @@ import {enableScreens} from 'react-native-screens';
 
 import MainTabs from './src/navigation/MainTabs';
 import PhotosphereScreen from './src/screens/PhotosphereScreen';
+import FourDirectionCardsScreen from './src/screens/FourDirectionCardsScreen';
+import DirectionCaptureScreen from './src/screens/DirectionCaptureScreen';
 
 import HomeScreen from './src/screens/HomeScreen';
 import ThreeDScreen from './src/screens/ThreeDScreen';
@@ -19,6 +21,21 @@ function App(): React.JSX.Element {
     <NavigationContainer>
       <Stack.Navigator screenOptions={{headerShown: false}}>
         <Stack.Screen name="MainTabs" component={MainTabs} />
+        <Stack.Screen
+          name="FourDirectionCards"
+          component={FourDirectionCardsScreen}
+          options={{
+            presentation: 'card',
+          }}
+        />
+        <Stack.Screen
+          name="DirectionCapture"
+          component={DirectionCaptureScreen}
+          options={{
+            presentation: 'fullScreenModal',
+            animation: 'slide_from_bottom',
+          }}
+        />
         <Stack.Screen
           name="Photosphere"
           component={PhotosphereScreen}

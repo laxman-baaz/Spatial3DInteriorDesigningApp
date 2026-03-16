@@ -51,10 +51,12 @@ def root():
 @app.post("/stitch")
 async def stitch(
     images: list[UploadFile] = File(..., description="Clicked images to stitch (min 2)"),
+    single_wall: bool = Form(False, description="If true, output natural size for one side (no 360° enforce)"),
 ):
     """
-    Upload clicked images; returns stitched 360° panorama as JPEG.
-    Uses OpenCV Stitcher (prepare_image, crop black borders, 2:1 equirectangular). No poses.
+    Upload clicked images; returns stitched panorama as JPEG.
+    single_wall=True: natural output for one wall (no enforce) — used for per-wall capture.
+    single_wall=False: full 360° equirectangular — used for photosphere all-around.
     """
     if len(images) < 2:
         raise HTTPException(status_code=400, detail="At least 2 images required to stitch")
@@ -70,7 +72,7 @@ async def stitch(
             paths.append(str(path))
 
         try:
-            out_img = stitch_panorama(paths)
+            out_img = stitch_panorama(paths, single_wall=single_wall)
         except ValueError as e:
             raise HTTPException(status_code=422, detail=str(e))
 
@@ -78,9 +80,14 @@ async def stitch(
         _, jpeg_buf = cv2.imencode(".jpg", out_img)
         jpeg_bytes = jpeg_buf.tobytes()
 
-        # Save to OUTPUT_DIR for persistence (e.g. for app cards / AsyncStorage)
+        # Save: single_wall → Walls/, else → OUTPUT_DIR
         save_id = str(uuid.uuid4())
-        save_path = OUTPUT_DIR / f"panorama_{save_id}.jpg"
+        if single_wall:
+            walls_dir = OUTPUT_DIR / "Walls"
+            walls_dir.mkdir(parents=True, exist_ok=True)
+            save_path = walls_dir / f"wall_{save_id}.jpg"
+        else:
+            save_path = OUTPUT_DIR / f"panorama_{save_id}.jpg"
         save_path.write_bytes(jpeg_bytes)
 
         return Response(
