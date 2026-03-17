@@ -19,14 +19,18 @@ cv2.ocl.setUseOpenCL(False)
 # ===============================
 MAX_IMAGE_DIMENSION = 2000
 MAX_IMAGE_DIMENSION_MANY_IMAGES = 1000  # Smaller for 5+ images to avoid camera params fail
+MAX_IMAGE_DIMENSION_WALL_MANY = 1400  # For 6+ wall images: higher = sharper output (slower)
 MAX_IMAGES_FOR_FAST_MODE = 4
+MAX_IMAGES_FOR_HIERARCHICAL = 6  # Use hierarchical (group) stitching for 6+ images
 STITCH_MODE = cv2.Stitcher_PANORAMA
 PANO_CONFIDENCE = 0.4  # Lower = more lenient for full 360°
 PANO_CONFIDENCE_WALL = 0.4  # Lenient for walls so more content is included (fewer black gaps)
+PANO_CONFIDENCE_WALL_MANY = 0.45  # Balance: reject bad matches but keep content
 
 # Wall output: keep natural proportions (no forced aspect ratio) to avoid squeezing + black padding.
 WALL_MAX_DIMENSION = 2000  # Max width or height of output; scale down if larger
-WALL_INPAINT_RADIUS = 5  # Inpaint small black gaps from stitching (0 = disabled)
+WALL_INPAINT_RADIUS = 3  # Inpaint small black gaps (smaller = less blur, 0 = disabled)
+WALL_EDGE_TRIM_PERCENT = 3  # Trim this % from left and right edges (reduces width, removes glass/edge artifacts)
 
 
 def _normalize_exposure(img: np.ndarray) -> np.ndarray:
@@ -108,6 +112,25 @@ def scale_to_max_dim(image: np.ndarray, max_dim: int = WALL_MAX_DIMENSION) -> np
     return cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
 
 
+def trim_edge_artifacts(
+    image: np.ndarray,
+    trim_percent: float | None = None,
+) -> np.ndarray:
+    """
+    Crop trim_percent from left and right edges to reduce width and remove edge artifacts.
+    trim_percent: 0–50, e.g. 5 = trim 5% from each side (10% total width removed).
+    """
+    if trim_percent is None:
+        trim_percent = WALL_EDGE_TRIM_PERCENT
+    if trim_percent <= 0:
+        return image
+    h, w = image.shape[:2]
+    trim_px = int(round(w * trim_percent / 100))
+    if trim_px <= 0 or 2 * trim_px >= w:
+        return image
+    return image[:, trim_px : w - trim_px].copy()
+
+
 def enforce_equirectangular(image: np.ndarray) -> np.ndarray:
     h, w = image.shape[:2]
     target_h = w // 2
@@ -168,6 +191,27 @@ def create_stitcher(
     return stitcher
 
 
+def _stitch_arrays(
+    images: list[np.ndarray],
+    mode: int | None = None,
+    confidence: float | None = None,
+) -> tuple[int, np.ndarray | None]:
+    """Stitch a list of numpy arrays (BGR uint8). Returns (status, result)."""
+    if len(images) < 2:
+        return -1, None
+    arrs = []
+    for img in images:
+        if not img.flags["C_CONTIGUOUS"] or img.dtype != np.uint8:
+            img = np.ascontiguousarray(img.astype(np.uint8))
+        arrs.append(img)
+    stitcher = create_stitcher(mode=mode, confidence=confidence, wave_correct=True)
+    try:
+        status, result = stitcher.stitch(arrs)
+    except cv2.error:
+        return -1, None
+    return status, result if status == cv2.Stitcher_OK else None
+
+
 def stitch_panorama(image_paths: list[str], *, single_wall: bool = False) -> np.ndarray:
     """
     Stitch clicked images into panorama.
@@ -187,6 +231,57 @@ def stitch_panorama(image_paths: list[str], *, single_wall: bool = False) -> np.
             return concat
 
     scans_mode = getattr(cv2, "Stitcher_SCANS", 1)
+
+    # Hierarchical stitching for 6+ images (single_wall): faster + often better quality
+    if single_wall and len(image_paths) >= MAX_IMAGES_FOR_HIERARCHICAL:
+        max_dim = MAX_IMAGE_DIMENSION_WALL_MANY
+        conf = PANO_CONFIDENCE_WALL_MANY
+        imgs = []
+        for p in image_paths:
+            img = prepare_image(p, max_dim=max_dim, normalize_exposure=False)
+            if img is not None and img.size > 0:
+                imgs.append(np.ascontiguousarray(img.astype(np.uint8)))
+        if len(imgs) >= MAX_IMAGES_FOR_HIERARCHICAL:
+            mid = len(imgs) // 2
+            g1, g2 = imgs[:mid], imgs[mid:]
+            status1, r1 = _stitch_arrays(g1, mode=scans_mode, confidence=conf)
+            if status1 == cv2.Stitcher_OK and r1 is not None:
+                status2, r2 = _stitch_arrays(g2, mode=scans_mode, confidence=conf)
+                if status2 == cv2.Stitcher_OK and r2 is not None:
+                    status_f, result = _stitch_arrays(
+                        [r1, r2], mode=scans_mode, confidence=conf
+                    )
+                    if status_f == cv2.Stitcher_OK and result is not None:
+                        result = crop_to_content(result)
+                        if WALL_INPAINT_RADIUS > 0:
+                            result = fill_black_gaps(
+                                result, black_thresh=25, inpaint_radius=WALL_INPAINT_RADIUS
+                            )
+                        result = scale_to_max_dim(result)
+                        if WALL_EDGE_TRIM_PERCENT > 0:
+                            result = trim_edge_artifacts(result)
+                        return result
+            # Fallback: try PANORAMA mode for groups
+            if len(imgs) >= MAX_IMAGES_FOR_HIERARCHICAL:
+                mid = len(imgs) // 2
+                g1, g2 = imgs[:mid], imgs[mid:]
+                status1, r1 = _stitch_arrays(g1, mode=STITCH_MODE, confidence=conf)
+                if status1 == cv2.Stitcher_OK and r1 is not None:
+                    status2, r2 = _stitch_arrays(g2, mode=STITCH_MODE, confidence=conf)
+                    if status2 == cv2.Stitcher_OK and r2 is not None:
+                        status_f, result = _stitch_arrays(
+                            [r1, r2], mode=STITCH_MODE, confidence=conf
+                        )
+                        if status_f == cv2.Stitcher_OK and result is not None:
+                            result = crop_to_content(result)
+                            if WALL_INPAINT_RADIUS > 0:
+                                result = fill_black_gaps(
+                                    result, black_thresh=25, inpaint_radius=WALL_INPAINT_RADIUS
+                                )
+                            result = scale_to_max_dim(result)
+                            if WALL_EDGE_TRIM_PERCENT > 0:
+                                result = trim_edge_artifacts(result)
+                            return result
 
     def _try_stitch(
         paths: list[str],
@@ -213,11 +308,19 @@ def stitch_panorama(image_paths: list[str], *, single_wall: bool = False) -> np.
             return -1, None  # OpenCV internal error (e.g. setSize), retry with other settings
         return status, result if status == cv2.Stitcher_OK else None
 
-    # For walls: fewer images typically, use higher res; enable exposure normalization
+    # For walls: fewer images typically, use higher res; 6+ images use smaller for speed
     if single_wall:
-        max_dim = MAX_IMAGE_DIMENSION  # walls usually 2–8 images
-        conf = PANO_CONFIDENCE_WALL
-        norm_exp = True
+        max_dim = (
+            MAX_IMAGE_DIMENSION_WALL_MANY
+            if len(image_paths) >= MAX_IMAGES_FOR_HIERARCHICAL
+            else MAX_IMAGE_DIMENSION
+        )
+        conf = (
+            PANO_CONFIDENCE_WALL_MANY
+            if len(image_paths) >= MAX_IMAGES_FOR_HIERARCHICAL
+            else PANO_CONFIDENCE_WALL
+        )
+        norm_exp = False  # Avoid exposure norm for many images (slower, can cause issues)
     else:
         max_dim = (
             MAX_IMAGE_DIMENSION_MANY_IMAGES
@@ -228,6 +331,8 @@ def stitch_panorama(image_paths: list[str], *, single_wall: bool = False) -> np.
         norm_exp = False
 
     # Strategy for walls: try SCANS first (affine, better for flat walls), then PANORAMA
+    use_many_images_shortcut = single_wall and len(image_paths) >= MAX_IMAGES_FOR_HIERARCHICAL
+
     if single_wall:
         # SCANS mode: affine transforms, better for planar wall surfaces
         status, result = _try_stitch(
@@ -237,25 +342,25 @@ def stitch_panorama(image_paths: list[str], *, single_wall: bool = False) -> np.
             status, result = _try_stitch(
                 image_paths, max_dim, mode=STITCH_MODE, confidence=conf, normalize_exposure=False
             )
-        # Try reversed order (pan direction can matter)
-        if status != cv2.Stitcher_OK:
-            rev = list(reversed(image_paths))
-            status, result = _try_stitch(
-                rev, max_dim, mode=scans_mode, confidence=conf, normalize_exposure=False
-            )
-        if status != cv2.Stitcher_OK:
-            status, result = _try_stitch(
-                rev, max_dim, mode=STITCH_MODE, confidence=conf, normalize_exposure=False
-            )
-        # Last resort: with exposure normalization (can help color drift, but may crash on some)
-        if status != cv2.Stitcher_OK:
-            status, result = _try_stitch(
-                image_paths, max_dim, mode=STITCH_MODE, confidence=conf, normalize_exposure=True
-            )
-        if status != cv2.Stitcher_OK:
-            status, result = _try_stitch(
-                image_paths, max_dim, mode=scans_mode, confidence=conf, normalize_exposure=True
-            )
+        # For 6+ images: skip reversed/exposure retries (already tried hierarchical; keep it fast)
+        if not use_many_images_shortcut:
+            if status != cv2.Stitcher_OK:
+                rev = list(reversed(image_paths))
+                status, result = _try_stitch(
+                    rev, max_dim, mode=scans_mode, confidence=conf, normalize_exposure=False
+                )
+            if status != cv2.Stitcher_OK:
+                status, result = _try_stitch(
+                    rev, max_dim, mode=STITCH_MODE, confidence=conf, normalize_exposure=False
+                )
+            if status != cv2.Stitcher_OK:
+                status, result = _try_stitch(
+                    image_paths, max_dim, mode=STITCH_MODE, confidence=conf, normalize_exposure=True
+                )
+            if status != cv2.Stitcher_OK:
+                status, result = _try_stitch(
+                    image_paths, max_dim, mode=scans_mode, confidence=conf, normalize_exposure=True
+                )
     else:
         status, result = _try_stitch(image_paths, max_dim, mode=STITCH_MODE, confidence=conf)
 
@@ -294,6 +399,9 @@ def stitch_panorama(image_paths: list[str], *, single_wall: bool = False) -> np.
         if WALL_INPAINT_RADIUS > 0:
             result = fill_black_gaps(result, black_thresh=25, inpaint_radius=WALL_INPAINT_RADIUS)
         result = scale_to_max_dim(result)
+        # Trim left/right edges to reduce width and remove glass/edge artifacts
+        if WALL_EDGE_TRIM_PERCENT > 0:
+            result = trim_edge_artifacts(result)
     else:
         result = enforce_equirectangular(result)
     return result
