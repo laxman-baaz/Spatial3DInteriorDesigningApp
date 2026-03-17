@@ -63,6 +63,7 @@ async def stitch(
     ),
     output_width: int = Form(4096, description="Equirectangular width (height = width/2)"),
     force_full_360: bool = Form(False, description="If true, output always 360×180 (2:1) for e.g. WorldLabs 3D; uncaptured areas black"),
+    mode: str = Form("full", description="'full' for 27-dot photosphere; 'wall' for single-wall 2–5 images (reduces drift/distortion)"),
 ):
     """
     Upload images and their poses; returns stitched equirectangular panorama as JPEG.
@@ -84,7 +85,9 @@ async def stitch(
 
     pitches = [float(p["pitch"]) for p in poses]
     yaws = [float(p["yaw"]) for p in poses]
-    rolls = [float(p.get("roll", 0.0)) for p in poses] # Default 0 for backwards compatibility
+    rolls = [float(p.get("roll", 0.0)) for p in poses]  # Default 0 for backwards compatibility
+
+    is_wall_mode = (mode or "").strip().lower() == "wall"
 
     tmp_dir = Path(tempfile.mkdtemp())
     paths = []
@@ -96,40 +99,56 @@ async def stitch(
             path.write_bytes(content)
             paths.append(str(path))
 
-        out_img = stitch_equirectangular(
-            paths,
-            pitches,
-            yaws,
-            rolls,
-            output_width=output_width,
-            # fov_h_deg=60°: closer to real phone portrait camera FOV than the 45° alignment FOV.
-            #   Gives ±30° per image vs 22.5° spacing → 15° horizontal overlap per seam.
-            #   Without overlap, soft blending has nothing to feather across → visible "box" edges.
-            # winner_takes_all=False: weighted average blend in the overlap zone — each pixel is a
-            #   smooth mix of whichever images cover it, weighted by distance-from-centre.
-            #   Eliminates the hard rectangular "photo pasted on sphere" look.
-            # edge_cutoff=0.85: discard the outer 15% of each frame (most distorted corners).
-            #   With fov_h_deg=60°: effective half-FOV = 30°×0.85 = 25.5° → coverage = 51° → 6° overlap ✓
-            # blend_softness=2.0: power-2 falloff gives a smooth Gaussian-like fade at edges.
-            fov_h_deg=FOV_H_DEG + 15.0,
-            fov_v_deg=FOV_V_DEG,
-            force_full_360=force_full_360,
-            winner_takes_all=False,
-            edge_cutoff=0.85,
-            blend_softness=2.0,
-            yaw_auto_correct=True,
-            num_columns=9,
-        )
+        # Wall mode: use OpenCV feature-based Stitcher (no poses) for single-wall images
+        use_wall_stitcher = False
+        if is_wall_mode and not force_full_360:
+            imgs = [cv2.imread(p) for p in paths]
+            if all(im is not None for im in imgs):
+                if len(imgs) == 1:
+                    out_img = imgs[0]
+                    use_wall_stitcher = True
+                else:
+                    stitcher = cv2.Stitcher.create()  # PANORAMA mode (default)
+                    status, pano = stitcher.stitch(imgs)
+                    if status == 0:  # cv2.Stitcher.OK
+                        out_img = pano
+                        use_wall_stitcher = True
+                    else:
+                        print(f"[stitch] Wall Stitcher failed (status={status}), using pose-based")
+                if use_wall_stitcher:
+                    h, w = out_img.shape[:2]
+                    if w > output_width:
+                        scale = output_width / w
+                        new_h = int(h * scale)
+                        out_img = cv2.resize(out_img, (output_width, new_h), interpolation=cv2.INTER_AREA)
 
-        # Light post-stitch pass — correct FOV (45/60) means geometry is already close to right.
-        # balance=0.8 keeps most of the frame without aggressive cropping.
-        out_img = undistort_panorama(
-            out_img,
-            camera_matrix=None,
-            dist_coeffs=None,
-            use_fisheye=True,
-            balance=0.8,
-        )
+        if not use_wall_stitcher:
+            out_img = stitch_equirectangular(
+                paths,
+                pitches,
+                yaws,
+                rolls,
+                output_width=output_width,
+                fov_h_deg=FOV_H_DEG + 15.0,
+                fov_v_deg=FOV_V_DEG,
+                force_full_360=force_full_360,
+                winner_takes_all=False,
+                edge_cutoff=0.85,
+                blend_softness=2.0,
+                yaw_auto_correct=False if is_wall_mode else True,
+                num_columns=9,
+            )
+
+        # Post-stitch undistort: skip for wall mode to avoid adding distortion.
+        # Full mode: mild pass to clean residual curvature.
+        if not is_wall_mode:
+            out_img = undistort_panorama(
+                out_img,
+                camera_matrix=None,
+                dist_coeffs=None,
+                use_fisheye=True,
+                balance=0.8,
+            )
 
         # Encode to JPEG
         _, jpeg_buf = cv2.imencode(".jpg", out_img)

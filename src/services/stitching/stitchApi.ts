@@ -28,15 +28,20 @@ export interface StitchApiImage {
  */
 export async function stitchPanoramaViaApi(
   images: StitchApiImage[],
-  options: {outputWidth?: number; forceFull360?: boolean} = {},
+  options: {
+    outputWidth?: number;
+    forceFull360?: boolean;
+    mode?: 'full' | 'wall';
+  } = {},
 ): Promise<StitchApiResult> {
   const start = Date.now();
   const outputWidth = options.outputWidth ?? 4096;
   const forceFull360 = options.forceFull360 ?? false;
+  const mode = options.mode ?? 'full';
   const url = getStitchApiUrl('/stitch');
 
   console.log(
-    `${LOG_TAG} Calling POST ${url} with ${images.length} image(s), outputWidth=${outputWidth}, forceFull360=${forceFull360}`,
+    `${LOG_TAG} Calling POST ${url} with ${images.length} image(s), outputWidth=${outputWidth}, forceFull360=${forceFull360}, mode=${mode}`,
   );
 
   if (images.length < 1) {
@@ -56,6 +61,7 @@ export async function stitchPanoramaViaApi(
     {name: 'poses_json', data: posesJson},
     {name: 'output_width', data: String(outputWidth)},
     {name: 'force_full_360', data: forceFull360 ? 'true' : 'false'},
+    {name: 'mode', data: mode},
     ...images.map((img, i) => ({
       name: 'images',
       filename: `img_${i}.jpg`,

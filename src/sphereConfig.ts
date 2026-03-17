@@ -56,3 +56,31 @@ export const TARGET_DOTS: TargetDot[] = [
 // All rings share yaw: 0°, 40°, 80°, 120°, 160°, 200°, 240°, 280°, 320°
 // Horizontal spacing: 40° (vs 45° for 8-dot layout → more overlap, smoother stitching)
 // Vertical coverage: pitch 45° … 135° (±45° from horizon, FOV_V=60° bridges the gaps)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WALL SCAN: 6-DOT LAYOUT (DEPRECATED — free capture is used now)
+// Previously: fixed 2×3 grid for one wall. Now users can capture 2+ images
+// per side in any arrangement; stitching uses device orientation poses.
+// Kept for reference only.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const WALL_YAWS = [0, 40, 80];
+const WALL_PITCH_TOP = 105;
+const WALL_PITCH_BOTTOM = 75;
+
+export const WALL_SCAN_DOTS: TargetDot[] = [
+  // Top row (2×3 grid)
+  ...WALL_YAWS.map((yaw, i) => ({
+    id: `u${i + 1}`,
+    pitch: WALL_PITCH_TOP,
+    yaw,
+    ring: 'upper',
+  })),
+  // Bottom row
+  ...WALL_YAWS.map((yaw, i) => ({
+    id: `l${i + 1}`,
+    pitch: WALL_PITCH_BOTTOM,
+    yaw,
+    ring: 'lower',
+  })),
+];

@@ -15,31 +15,38 @@ import {
   useCameraFormat,
 } from 'react-native-vision-camera';
 import useDeviceOrientation from '../hooks/useDeviceOrientation';
-import SphereOverlay from '../components/SphereOverlay';
 import SphereReview from '../components/SphereReview';
 import MaskedView from '@react-native-masked-view/masked-view';
-import {project3DTo2D} from '../utils/projection';
-import {TARGET_DOTS} from '../sphereConfig';
 import {stitchPanoramaViaApi} from '../services/stitching/stitchApi';
 import {savePanorama, dataUrlToBase64} from '../services/panoramaStorage';
 
 const {width, height} = Dimensions.get('window');
 const VIEWFINDER_WIDTH = width * 0.8;
 const VIEWFINDER_HEIGHT = height * 0.7;
-const FOV_H = 45; // Portrait narrower horizontal FOV
-const FOV_V = 60; // Portrait wider vertical FOV
-const ALIGN_THRESHOLD_PX = 20;
-/** Must hold the dot aligned for this long (ms) before auto-capture */
-const ALIGN_HOLD_MS = 1000;
 
-// High-resolution capture for panorama: 12MP 4:3 (matches FOV 60°×45°)
+// High-resolution capture for panorama: 12MP 4:3
 const PHOTO_TARGET_WIDTH = 4032;
 const PHOTO_TARGET_HEIGHT = 3024;
+
+/** Convert sensor radians to stitcher degrees. App: pitch 0=nadir, 90=horizon, 180=zenith; yaw 0..360 */
+function orientationToDegrees(pitchRad: number, yawRad: number, rollRad: number) {
+  const pitchDeg = (pitchRad * 180) / Math.PI;
+  const yawDeg = ((yawRad * 180) / Math.PI + 360) % 360;
+  const rollDeg = (rollRad * 180) / Math.PI;
+  return {pitchDeg, yawDeg, rollDeg};
+}
+
+interface CapturedImage {
+  id: number;
+  imagePath: string;
+  pitch: number;
+  yaw: number;
+  roll: number;
+}
 
 const PhotosphereScreen = () => {
   const device = useCameraDevice('back');
 
-  // Prefer format with photo resolution closest to 12MP 4:3 for better width/height
   const format = useCameraFormat(device, [
     {
       photoResolution: {
@@ -54,147 +61,14 @@ const PhotosphereScreen = () => {
   const {hasPermission, requestPermission} = useCameraPermission();
   const {reset, ...orientation} = useDeviceOrientation();
   const [isCapturing, setIsCapturing] = useState(false);
-
-  // 27-DOT layout: 3 rings × 9 dots, all aligned yaw (0,40,80…320°)
-  // upper pitch=135°  center pitch=90°  lower pitch=45°  — from sphereConfig
-  const generatePoints = (): Array<{
-    id: number;
-    pitch: number;
-    yaw: number;
-    captured: boolean;
-    imagePath: string | null;
-    roll: number | null;
-  }> => {
-    return TARGET_DOTS.map((dot, index) => ({
-      id: index + 1,
-      pitch: dot.pitch,
-      yaw: dot.yaw,
-      captured: false,
-      imagePath: null,
-      roll: null,
-    }));
-  };
-
-  const [points, setPoints] = useState(generatePoints());
+  const [capturedImages, setCapturedImages] = useState<CapturedImage[]>([]);
   const [isStitching, setIsStitching] = useState(false);
-  const capturedCount = points.filter(p => p.captured).length;
-  const totalDots = TARGET_DOTS.length; // 27 (3 rings × 9)
-  const allCaptured = capturedCount === totalDots;
-  const hasLoggedAllCaptured = React.useRef(false);
-  const alignedPointIdRef = React.useRef<number | null>(null);
-  const holdTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(
-    null,
-  );
+  const nextIdRef = React.useRef(1);
 
-  // Reset orientation on mount to establishing "Zero"
+  // Reset yaw on mount so 0° = where user started
   useEffect(() => {
     reset();
   }, []);
-
-  useEffect(() => {
-    return () => {
-      if (holdTimeoutRef.current != null) {
-        clearTimeout(holdTimeoutRef.current);
-        holdTimeoutRef.current = null;
-      }
-    };
-  }, []);
-
-  useEffect(() => {
-    checkAlignment();
-  }, [orientation, points]);
-
-  const checkAlignment = () => {
-    if (isCapturing) return;
-
-    const uncapturedPoints = points.filter(p => !p.captured);
-
-    if (uncapturedPoints.length === 0) {
-      if (!hasLoggedAllCaptured.current) {
-        hasLoggedAllCaptured.current = true;
-        console.log('All dots captured! 🎉');
-      }
-      if (holdTimeoutRef.current != null) {
-        clearTimeout(holdTimeoutRef.current);
-        holdTimeoutRef.current = null;
-      }
-      alignedPointIdRef.current = null;
-      return;
-    }
-    hasLoggedAllCaptured.current = false;
-
-    const cx = width / 2;
-    const cy = height / 2;
-    const projectionParams = {width, height, fovH: FOV_H, fovV: FOV_V};
-
-    // Find the dot closest to center that is within threshold (actual aim, not first in list)
-    let best: {point: (typeof uncapturedPoints)[0]; dist: number} | null = null;
-    for (const point of uncapturedPoints) {
-      const {x, y} = project3DTo2D(point, orientation, projectionParams);
-      const dist = Math.sqrt(Math.pow(x - cx, 2) + Math.pow(y - cy, 2));
-      if (dist < ALIGN_THRESHOLD_PX && (best == null || dist < best.dist)) {
-        best = {point, dist};
-      }
-    }
-
-    if (best == null) {
-      if (holdTimeoutRef.current != null) {
-        clearTimeout(holdTimeoutRef.current);
-        holdTimeoutRef.current = null;
-      }
-      alignedPointIdRef.current = null;
-      return;
-    }
-
-    const {point} = best;
-    if (alignedPointIdRef.current === point.id) {
-      // Still on same dot; timer already running, do nothing
-      return;
-    }
-
-    // New dot aligned: cancel previous timer and start 2s hold for this dot
-    if (holdTimeoutRef.current != null) {
-      clearTimeout(holdTimeoutRef.current);
-      holdTimeoutRef.current = null;
-    }
-    alignedPointIdRef.current = point.id;
-    const pointIdToCapture = point.id;
-    holdTimeoutRef.current = setTimeout(() => {
-      holdTimeoutRef.current = null;
-      alignedPointIdRef.current = null;
-      takePhoto(pointIdToCapture);
-    }, ALIGN_HOLD_MS);
-  };
-
-  const takePhoto = async (id: number) => {
-    if (camera.current) {
-      setIsCapturing(true);
-      try {
-        const photo = await camera.current.takePhoto({
-          enableShutterSound: true,
-        });
-        console.log(`Captured point ${id}:`, photo.path);
-
-        // Mark as captured, save current physical roll
-        setPoints(prev =>
-          prev.map(p =>
-            p.id === id
-              ? {
-                  ...p,
-                  captured: true,
-                  imagePath: `file://${photo.path}`,
-                  roll: orientation.roll,
-                }
-              : p,
-          ),
-        );
-      } catch (e) {
-        console.error('Capture failed', e);
-      } finally {
-        setIsCapturing(false);
-      }
-    }
-  };
 
   useEffect(() => {
     if (!hasPermission) {
@@ -202,55 +76,73 @@ const PhotosphereScreen = () => {
     }
   }, [hasPermission]);
 
-  const handleStitch = async () => {
-    if (isStitching) return;
-    const withPaths = points.filter(p => p.captured && p.imagePath);
-    if (withPaths.length === 0) {
-      Alert.alert(
-        'No images',
-        'Capture at least one dot to create a panorama.',
+  const takePhoto = async () => {
+    if (!camera.current || isCapturing) return;
+
+    setIsCapturing(true);
+    try {
+      const photo = await camera.current.takePhoto({
+        enableShutterSound: true,
+      });
+
+      const {pitchDeg, yawDeg, rollDeg} = orientationToDegrees(
+        orientation.pitch,
+        orientation.yaw,
+        orientation.roll,
       );
-      return;
+
+      const id = nextIdRef.current++;
+      setCapturedImages(prev => [
+        ...prev,
+        {
+          id,
+          imagePath: `file://${photo.path}`,
+          pitch: pitchDeg,
+          yaw: yawDeg,
+          roll: rollDeg,
+        },
+      ]);
+
+      console.log(
+        `[Photosphere] Captured #${id} pitch=${pitchDeg.toFixed(1)}° yaw=${yawDeg.toFixed(1)}° roll=${rollDeg.toFixed(1)}°`,
+      );
+    } catch (e) {
+      console.error('Capture failed', e);
+    } finally {
+      setIsCapturing(false);
     }
-    console.log(
-      '[Photosphere] Stitch: sending',
-      withPaths.length,
-      'images to API',
+  };
+
+  const handleStitchHint = () => {
+    Alert.alert(
+      'Capture first',
+      'Pan around and tap the capture button to take photos. Capture 6+ images of a wall for best results.',
     );
+  };
+
+  const handleStitchWithImages = async () => {
+    if (isStitching || capturedImages.length === 0) return;
+
+    console.log('[Photosphere] Stitch: sending', capturedImages.length, 'images to API');
     setIsStitching(true);
     try {
       const result = await stitchPanoramaViaApi(
-        withPaths.map(p => ({
-          path: p.imagePath!,
-          pitch: p.pitch,
-          yaw: p.yaw,
-          roll: p.roll ?? 0,
+        capturedImages.map(img => ({
+          path: img.imagePath,
+          pitch: img.pitch,
+          yaw: img.yaw,
+          roll: img.roll,
         })),
-        {outputWidth: 4096, forceFull360: true},
+        {outputWidth: 4096, forceFull360: false},
       );
-      console.log('[Photosphere] Stitch result:', {
-        success: result.success,
-        panoramaId: result.panoramaId,
-        hasImageData: !!result.imageData,
-        imageDataLength: result.imageData?.length ?? 0,
-        error: result.error,
-      });
+
       if (result.success) {
         const id = result.panoramaId ?? `pano_${Date.now()}`;
         const base64 = result.imageData
           ? dataUrlToBase64(result.imageData)
           : null;
         if (base64) {
-          console.log(
-            '[Photosphere] Saving panorama locally, id=',
-            id,
-            'base64Len=',
-            base64.length,
-          );
           await savePanorama(id, base64);
-          console.log('[Photosphere] Panorama saved to storage');
-        } else {
-          console.log('[Photosphere] No base64 from API - not saving locally');
         }
         const time =
           result.durationMs != null
@@ -260,9 +152,7 @@ const PhotosphereScreen = () => {
           'Panorama ready',
           base64
             ? `Saved to Recent Projects & 3D Gallery.${time}`
-            : `Stitched successfully.${time}${
-                result.panoramaId ? `\nID: ${result.panoramaId}` : ''
-              }`,
+            : `Stitched successfully.${time}`,
         );
       } else {
         Alert.alert('Stitching failed', result.error ?? 'Unknown error');
@@ -285,9 +175,17 @@ const PhotosphereScreen = () => {
       </View>
     );
 
+  // Map captured images to SphereReview format (pitch, yaw, captured, imagePath)
+  const reviewPoints = capturedImages.map(img => ({
+    id: img.id,
+    pitch: img.pitch,
+    yaw: img.yaw,
+    captured: true,
+    imagePath: img.imagePath,
+  }));
+
   return (
     <View style={styles.container}>
-      {/* LAYER 1: Live Camera */}
       <Camera
         ref={camera}
         style={StyleSheet.absoluteFill}
@@ -297,59 +195,57 @@ const PhotosphereScreen = () => {
         format={format}
       />
 
-      {/* LAYER 2: Masked Overlay (Grey Dimension + Photos) */}
       <MaskedView
         style={StyleSheet.absoluteFill}
         maskElement={
           <View style={styles.maskContainer}>
-            {/* Opaque background keeps content visible */}
             <View style={styles.maskBackground} />
-            {/* Transparent hole hides content (showing camera behind) */}
             <View style={styles.centerHole} />
           </View>
         }>
         <SphereReview
-          points={points}
+          points={reviewPoints}
           orientation={orientation}
           viewFinderWidth={VIEWFINDER_WIDTH}
           viewFinderHeight={VIEWFINDER_HEIGHT}
         />
       </MaskedView>
 
-      {/* LAYER 3: Target Dots & Guides (viewfinder 80% × 70% of screen) */}
-      <SphereOverlay
-        orientation={orientation}
-        points={points}
-        width={width}
-        height={height}
-        fovH={FOV_H}
-        fovV={FOV_V}
-        viewFinderWidth={VIEWFINDER_WIDTH}
-        viewFinderHeight={VIEWFINDER_HEIGHT}
-        alignThresholdPx={ALIGN_THRESHOLD_PX}
-      />
-
-      {/* Progress HUD */}
+      {/* HUD */}
       <View style={styles.hud}>
         <Text style={styles.hudText}>
-          {capturedCount} / {totalDots}
+          {capturedImages.length} captured
         </Text>
+        <Text style={styles.hudHint}>Pan & tap to capture</Text>
       </View>
 
-      {/* Create panorama — always visible; uses all captured images (1–27) */}
+      {/* Capture button */}
+      <TouchableOpacity
+        style={[styles.captureButton, isCapturing && styles.captureButtonDisabled]}
+        onPress={takePhoto}
+        disabled={isCapturing}
+        activeOpacity={0.8}>
+        {isCapturing ? (
+          <ActivityIndicator color="#fff" size="small" />
+        ) : (
+          <View style={styles.captureButtonInner} />
+        )}
+      </TouchableOpacity>
+
+      {/* Stitch button */}
       <TouchableOpacity
         style={[
           styles.stitchButton,
-          (isStitching || capturedCount === 0) && styles.stitchButtonDisabled,
+          (isStitching || capturedImages.length === 0) && styles.stitchButtonDisabled,
         ]}
-        onPress={handleStitch}
-        disabled={isStitching || capturedCount === 0}
+        onPress={capturedImages.length > 0 ? handleStitchWithImages : handleStitchHint}
+        disabled={isStitching}
         activeOpacity={0.8}>
         {isStitching ? (
           <ActivityIndicator color="#fff" size="small" />
         ) : (
           <Text style={styles.stitchButtonText}>
-            Create panorama {capturedCount > 0 ? `(${capturedCount})` : ''}
+            Create panorama {capturedImages.length > 0 ? `(${capturedImages.length})` : ''}
           </Text>
         )}
       </TouchableOpacity>
@@ -368,7 +264,7 @@ const styles = StyleSheet.create({
   },
   maskBackground: {
     flex: 1,
-    backgroundColor: 'black', // The mask is opaque (black), so content shows.
+    backgroundColor: 'black',
   },
   centerHole: {
     position: 'absolute',
@@ -377,7 +273,7 @@ const styles = StyleSheet.create({
     width: VIEWFINDER_WIDTH,
     height: VIEWFINDER_HEIGHT,
     borderRadius: 16,
-    backgroundColor: 'transparent', // The mask is transparent, so camera shows through.
+    backgroundColor: 'transparent',
   },
   hud: {
     position: 'absolute',
@@ -387,11 +283,39 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 10,
     borderRadius: 20,
+    alignItems: 'center',
   },
   hudText: {
     color: 'white',
     fontSize: 18,
     fontWeight: 'bold',
+  },
+  hudHint: {
+    color: 'rgba(255,255,255,0.7)',
+    fontSize: 12,
+    marginTop: 4,
+  },
+  captureButton: {
+    position: 'absolute',
+    bottom: 140,
+    alignSelf: 'center',
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: 'rgba(255,255,255,0.3)',
+    borderWidth: 4,
+    borderColor: 'white',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  captureButtonDisabled: {
+    opacity: 0.6,
+  },
+  captureButtonInner: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: 'white',
   },
   stitchButton: {
     position: 'absolute',
@@ -405,7 +329,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   stitchButtonDisabled: {
-    opacity: 0.8,
+    opacity: 0.6,
   },
   stitchButtonText: {
     color: 'white',

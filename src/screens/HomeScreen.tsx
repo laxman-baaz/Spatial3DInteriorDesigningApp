@@ -13,11 +13,13 @@ import {SafeAreaView} from 'react-native-safe-area-context';
 import {useFocusEffect} from '@react-navigation/native';
 import Icon from 'react-native-vector-icons/Ionicons';
 import {loadPanoramas, type PanoramaItem} from '../services/panoramaStorage';
+import {useRoomScan} from '../context/RoomScanContext';
 
 const {width} = Dimensions.get('window');
 
 export default function HomeScreen({navigation}: any) {
   const [scans, setScans] = useState<PanoramaItem[]>([]);
+  const {clearAll} = useRoomScan();
 
   useFocusEffect(
     useCallback(() => {
@@ -69,7 +71,10 @@ export default function HomeScreen({navigation}: any) {
         <View style={styles.actionContainer}>
           <TouchableOpacity
             style={styles.newScanCard}
-            onPress={() => navigation.navigate('Photosphere')}
+            onPress={() => {
+              clearAll();
+              navigation.navigate('WallScan');
+            }}
             activeOpacity={0.9}>
             <View style={styles.newScanContent}>
               <View style={styles.iconContainer}>
