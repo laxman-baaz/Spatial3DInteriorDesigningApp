@@ -39,7 +39,7 @@ from stitch_equirect import (
 )
 from nanobanana import stage_panorama as nb_stage_panorama
 from nanobanana import stitch_panorama_google as nb_stitch_panorama
-from nanobanana import STITCH_PANORAMA_PROMPT
+from nanobanana import STITCH_PANORAMA_PROMPT, STITCH_WALL_PROMPT
 from worldlabs import reconstruct_world, WorldResult
 
 app = FastAPI(
@@ -71,7 +71,7 @@ async def stitch(
     ),
     output_width: int = Form(4096, description="Equirectangular width (height = width/2)"),
     force_full_360: bool = Form(False, description="If true, output always 360×180 (2:1) for e.g. WorldLabs 3D; uncaptured areas black"),
-    mode: str = Form("full", description="'full' for 27-dot photosphere; 'wall' for single-wall 2–5 images; 'nanobanana' for AI stitching of 4 walls via Gemini"),
+    mode: str = Form("full", description="'full' for 27-dot photosphere; 'wall' for single-wall via NanoBanana AI; 'nanobanana' for AI stitching of 4 walls via Gemini"),
 ):
     """
     Upload images and their poses; returns stitched equirectangular panorama as JPEG.
@@ -107,7 +107,41 @@ async def stitch(
     is_wall_mode = (mode or "").strip().lower() == "wall"
     is_nanobanana_mode = (mode or "").strip().lower() == "nanobanana"
 
-    # NanoBanana 2 (Gemini) AI stitching: 4 wall images → seamless panorama
+    # NanoBanana: single wall – stitch overlapping photos of one wall via AI
+    if is_wall_mode and not force_full_360:
+        google_key = os.environ.get("GOOGLE_API_KEY", "").strip()
+        if not google_key:
+            raise HTTPException(
+                status_code=503,
+                detail="GOOGLE_API_KEY required for wall stitching. Set it in backend/.env",
+            )
+        img_bytes_list = [await img.read() for img in images]
+        if len(img_bytes_list) == 1:
+            out_bytes = img_bytes_list[0]
+        else:
+            try:
+                out_bytes = nb_stitch_panorama(img_bytes_list, STITCH_WALL_PROMPT, google_key)
+            except TimeoutError as e:
+                raise HTTPException(status_code=504, detail=str(e))
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                raise HTTPException(status_code=500, detail=f"NanoBanana wall stitching failed: {e}")
+
+        save_id = str(uuid.uuid4())
+        save_path = WALLS_DIR / f"wall_{save_id}.jpg"
+        save_path.write_bytes(out_bytes)
+        print(f"[/stitch] NanoBanana wall stitch saved → {save_path}")
+        return Response(
+            content=out_bytes,
+            media_type="image/jpeg",
+            headers={
+                "X-Panorama-Id": save_id,
+                "X-Panorama-Path": str(save_path),
+            },
+        )
+
+    # NanoBanana 2 (Gemini) AI stitching: 4 wall images → seamless 360° panorama
     if is_nanobanana_mode:
         if len(images) != 4:
             raise HTTPException(
@@ -153,31 +187,8 @@ async def stitch(
             path.write_bytes(content)
             paths.append(str(path))
 
-        # Wall mode: use OpenCV feature-based Stitcher (no poses) for single-wall images
-        use_wall_stitcher = False
-        if is_wall_mode and not force_full_360:
-            imgs = [cv2.imread(p) for p in paths]
-            if all(im is not None for im in imgs):
-                if len(imgs) == 1:
-                    out_img = imgs[0]
-                    use_wall_stitcher = True
-                else:
-                    stitcher = cv2.Stitcher.create()  # PANORAMA mode (default)
-                    status, pano = stitcher.stitch(imgs)
-                    if status == 0:  # cv2.Stitcher.OK
-                        out_img = pano
-                        use_wall_stitcher = True
-                    else:
-                        print(f"[stitch] Wall Stitcher failed (status={status}), using pose-based")
-                if use_wall_stitcher:
-                    h, w = out_img.shape[:2]
-                    if w > output_width:
-                        scale = output_width / w
-                        new_h = int(h * scale)
-                        out_img = cv2.resize(out_img, (output_width, new_h), interpolation=cv2.INTER_AREA)
-
-        if not use_wall_stitcher:
-            out_img = stitch_equirectangular(
+        # Full mode: pose-based stitching (photosphere)
+        out_img = stitch_equirectangular(
                 paths,
                 pitches,
                 yaws,
@@ -193,7 +204,7 @@ async def stitch(
                 num_columns=9,
             )
 
-        # Post-stitch undistort: skip for wall mode to avoid adding distortion.
+        # Post-stitch undistort
         if not is_wall_mode:
             out_img = undistort_panorama(
                 out_img,
@@ -207,13 +218,9 @@ async def stitch(
         _, jpeg_buf = cv2.imencode(".jpg", out_img)
         jpeg_bytes = jpeg_buf.tobytes()
 
-        # Save to OUTPUT_DIR (or WALLS_DIR for wall mode) for persistence
+        # Save to OUTPUT_DIR for persistence
         save_id = str(uuid.uuid4())
-        if is_wall_mode:
-            save_path = WALLS_DIR / f"wall_{save_id}.jpg"
-            print(f"[/stitch] Saved wall panorama → {save_path}")
-        else:
-            save_path = OUTPUT_DIR / f"panorama_{save_id}.jpg"
+        save_path = OUTPUT_DIR / f"panorama_{save_id}.jpg"
         save_path.write_bytes(jpeg_bytes)
 
         return Response(

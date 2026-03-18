@@ -59,10 +59,16 @@ def _call_gemini_generate(
 
 # Prompt for AI stitching of 4 wall images into equirectangular panorama
 STITCH_PANORAMA_PROMPT = (
-    "Take these 4 room wall images and create an equirectangular panorama as if shot with a 360 camera. "
-    "Place them side by side in order, blending the edges where walls meet at 90-degree corners. "
-    "The result should look like a natural interior panorama with smooth corner transitions, "
-    "no black gaps, and consistent lighting throughout."
+    "Stitch these 4 images into one equirectangular panorama. Place them in order, "
+    "blend the edges where they meet. Merge overlapping content so each object appears only once. "
+    "Do not add, remove, or alter anything—only stitch the given images."
+)
+
+# Prompt for AI stitching of overlapping photos of a single wall (each side)
+STITCH_WALL_PROMPT = (
+    "Stitch these images into one seamless panorama. Place them in order, blend the edges where they meet. "
+    "Merge overlapping content so each object appears only once. "
+    "Do not add, remove, or alter anything—only stitch the given images."
 )
 
 
