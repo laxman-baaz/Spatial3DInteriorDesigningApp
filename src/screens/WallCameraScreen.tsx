@@ -21,7 +21,6 @@ import Icon from 'react-native-vector-icons/Ionicons';
 import useDeviceOrientation from '../hooks/useDeviceOrientation';
 import {orientationToDegrees} from '../utils/orientationUtils';
 import {useRoomScan, type CapturedImage, type WallId} from '../context/RoomScanContext';
-import {stitchPanoramaViaApi} from '../services/stitching/stitchApi';
 
 const PHOTO_TARGET_WIDTH = 4032;
 const PHOTO_TARGET_HEIGHT = 3024;
@@ -29,7 +28,7 @@ const PHOTO_TARGET_HEIGHT = 3024;
 export default function WallCameraScreen({navigation, route}: any) {
   const wallId = route.params?.wallId as WallId | undefined;
   const device = useCameraDevice('back');
-  const {setWallImages, setWallStitchedResult, clearWallStitchedResult} = useRoomScan();
+  const {setWallImages, clearWallStitchedResult, startWallStitch} = useRoomScan();
 
   const format = useCameraFormat(device, [
     {photoResolution: {width: PHOTO_TARGET_WIDTH, height: PHOTO_TARGET_HEIGHT}},
@@ -41,7 +40,6 @@ export default function WallCameraScreen({navigation, route}: any) {
   const {reset, ...orientation} = useDeviceOrientation();
   const [isCapturing, setIsCapturing] = useState(false);
   const [capturedImages, setCapturedImages] = useState<CapturedImage[]>([]);
-  const [isStitching, setIsStitching] = useState(false);
   const nextIdRef = React.useRef(1);
 
   useEffect(() => {
@@ -82,7 +80,7 @@ export default function WallCameraScreen({navigation, route}: any) {
     }
   };
 
-  const handleDone = async () => {
+  const handleDone = () => {
     if (!wallId) return;
 
     setWallImages(wallId, capturedImages);
@@ -93,30 +91,8 @@ export default function WallCameraScreen({navigation, route}: any) {
       return;
     }
 
-    setIsStitching(true);
-    try {
-      const images = capturedImages.map(img => ({
-        path: img.imagePath,
-        pitch: img.pitch,
-        yaw: img.yaw,
-        roll: img.roll,
-      }));
-
-      const result = await stitchPanoramaViaApi(images, {
-        outputWidth: 2048,
-        forceFull360: false, // partial stitch for this wall only, not 360°
-        mode: 'wall',
-      });
-
-      if (result.success && result.imageData) {
-        setWallStitchedResult(wallId, result.imageData);
-      }
-    } catch (e) {
-      console.error('[WallCamera] Stitch failed:', e);
-    } finally {
-      setIsStitching(false);
-      navigation.goBack();
-    }
+    startWallStitch(wallId, capturedImages);
+    navigation.goBack();
   };
 
   if (!wallId) {
@@ -180,18 +156,10 @@ export default function WallCameraScreen({navigation, route}: any) {
 
       {/* Done button */}
       <TouchableOpacity
-        style={[styles.doneButton, isStitching && styles.doneButtonDisabled]}
+        style={styles.doneButton}
         onPress={handleDone}
-        disabled={isStitching}
         activeOpacity={0.8}>
-        {isStitching ? (
-          <>
-            <ActivityIndicator color="#fff" size="small" style={styles.doneSpinner} />
-            <Text style={styles.doneButtonText}>Stitching…</Text>
-          </>
-        ) : (
-          <Text style={styles.doneButtonText}>Done</Text>
-        )}
+        <Text style={styles.doneButtonText}>Done</Text>
       </TouchableOpacity>
     </View>
   );

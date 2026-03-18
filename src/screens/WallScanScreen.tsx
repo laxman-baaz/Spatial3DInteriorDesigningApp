@@ -31,7 +31,7 @@ const WALL_YAW_OFFSET: Record<string, number> = {
 };
 
 export default function WallScanScreen({navigation}: any) {
-  const {wallImages, wallStitchedResults} = useRoomScan();
+  const {wallImages, wallStitchedResults, wallStitchingInProgress} = useRoomScan();
   const canCreatePanorama =
     !!wallStitchedResults.wall1 &&
     !!wallStitchedResults.wall2 &&
@@ -45,6 +45,7 @@ export default function WallScanScreen({navigation}: any) {
   };
 
   const handleCardPress = (wallId: WallId) => {
+    if (wallStitchingInProgress[wallId]) return;
     const stitched = wallStitchedResults[wallId];
     if (stitched) {
       setViewerWall(wallId);
@@ -147,11 +148,13 @@ export default function WallScanScreen({navigation}: any) {
             const count = wallImages[wall.id].length;
             const stitchedUri = wallStitchedResults[wall.id];
             const hasResult = !!stitchedUri;
+            const isStitching = !!wallStitchingInProgress[wall.id];
             return (
               <TouchableOpacity
                 key={wall.id}
-                style={styles.card}
+                style={[styles.card, isStitching && styles.cardDisabled]}
                 onPress={() => handleCardPress(wall.id)}
+                disabled={isStitching}
                 activeOpacity={0.8}>
                 <View style={styles.cardPreview}>
                   {hasResult ? (
@@ -165,20 +168,30 @@ export default function WallScanScreen({navigation}: any) {
                       <Icon name="cube-outline" size={32} color="#6200ee" />
                     </View>
                   )}
-                  <TouchableOpacity
-                    style={styles.cameraIcon}
-                    onPress={() => handleCapturePress(wall.id)}
-                    hitSlop={{top: 12, bottom: 12, left: 12, right: 12}}>
-                    <Icon name="camera" size={22} color="#fff" />
-                  </TouchableOpacity>
+                  {isStitching && (
+                    <View style={styles.cardLoaderOverlay}>
+                      <ActivityIndicator color="#fff" size="large" />
+                      <Text style={styles.cardLoaderText}>Stitching…</Text>
+                    </View>
+                  )}
+                  {!isStitching && (
+                    <TouchableOpacity
+                      style={styles.cameraIcon}
+                      onPress={() => handleCapturePress(wall.id)}
+                      hitSlop={{top: 12, bottom: 12, left: 12, right: 12}}>
+                      <Icon name="camera" size={22} color="#fff" />
+                    </TouchableOpacity>
+                  )}
                 </View>
                 <Text style={styles.cardLabel}>{wall.label}</Text>
                 <Text style={styles.cardCount}>
-                  {hasResult
-                    ? 'Tap to view'
-                    : count > 0
-                      ? `${count} image${count === 1 ? '' : 's'}`
-                      : 'Tap to capture'}
+                  {isStitching
+                    ? 'Stitching…'
+                    : hasResult
+                      ? 'Tap to view'
+                      : count > 0
+                        ? `${count} image${count === 1 ? '' : 's'}`
+                        : 'Tap to capture'}
                 </Text>
               </TouchableOpacity>
             );
@@ -274,6 +287,22 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.06,
     shadowRadius: 8,
     elevation: 3,
+  },
+  cardDisabled: {
+    opacity: 0.85,
+  },
+  cardLoaderOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderRadius: 12,
+  },
+  cardLoaderText: {
+    color: '#fff',
+    fontSize: 14,
+    marginTop: 8,
+    fontWeight: '600',
   },
   cardPreview: {
     width: '100%',

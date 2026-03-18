@@ -1,4 +1,5 @@
 import React, {createContext, useContext, useState, useCallback} from 'react';
+import {stitchPanoramaViaApi} from '../services/stitching/stitchApi';
 
 export interface CapturedImage {
   id: number;
@@ -20,13 +21,18 @@ interface RoomScanState {
 /** Per-wall stitched panorama: data URL (base64) or file URI for card preview */
 export type WallStitchedResults = Partial<Record<WallId, string>>;
 
+/** Per-wall stitching in progress */
+export type WallStitchingInProgress = Partial<Record<WallId, boolean>>;
+
 interface RoomScanContextValue {
   wallImages: RoomScanState;
   wallStitchedResults: WallStitchedResults;
+  wallStitchingInProgress: WallStitchingInProgress;
   addImages: (wallId: WallId, images: CapturedImage[]) => void;
   setWallImages: (wallId: WallId, images: CapturedImage[]) => void;
   setWallStitchedResult: (wallId: WallId, imageData: string) => void;
   clearWallStitchedResult: (wallId: WallId) => void;
+  startWallStitch: (wallId: WallId, images: CapturedImage[]) => void;
   clearAll: () => void;
   totalCount: number;
 }
@@ -44,6 +50,8 @@ export function RoomScanProvider({children}: {children: React.ReactNode}) {
   const [wallImages, setWallImagesState] = useState<RoomScanState>(initialState);
   const [wallStitchedResults, setWallStitchedResultsState] =
     useState<WallStitchedResults>({});
+  const [wallStitchingInProgress, setWallStitchingInProgress] =
+    useState<WallStitchingInProgress>({});
 
   const addImages = useCallback((wallId: WallId, images: CapturedImage[]) => {
     setWallImagesState(prev => ({
@@ -74,9 +82,47 @@ export function RoomScanProvider({children}: {children: React.ReactNode}) {
     });
   }, []);
 
+  const startWallStitch = useCallback((wallId: WallId, images: CapturedImage[]) => {
+    if (!images || images.length === 0) return;
+
+    setWallStitchingInProgress(prev => ({...prev, [wallId]: true}));
+
+    const payload = images.map(img => ({
+        path: img.imagePath,
+        pitch: img.pitch,
+        yaw: img.yaw,
+        roll: img.roll,
+      }));
+
+      stitchPanoramaViaApi(payload, {
+        outputWidth: 2048,
+        forceFull360: false,
+        mode: 'wall',
+      })
+        .then(result => {
+          if (result.success && result.imageData) {
+            setWallStitchedResultsState(prev => ({
+              ...prev,
+              [wallId]: result.imageData!,
+            }));
+          }
+        })
+        .catch(e => {
+          console.error('[RoomScan] Wall stitch failed:', e);
+        })
+        .finally(() => {
+          setWallStitchingInProgress(prev => {
+            const next = {...prev};
+            delete next[wallId];
+            return next;
+          });
+        });
+  }, []);
+
   const clearAll = useCallback(() => {
     setWallImagesState(initialState);
     setWallStitchedResultsState({});
+    setWallStitchingInProgress({});
   }, []);
 
   const totalCount =
@@ -90,10 +136,12 @@ export function RoomScanProvider({children}: {children: React.ReactNode}) {
       value={{
         wallImages,
         wallStitchedResults,
+        wallStitchingInProgress,
         addImages,
         setWallImages,
         setWallStitchedResult,
         clearWallStitchedResult,
+        startWallStitch,
         clearAll,
         totalCount,
       }}>
