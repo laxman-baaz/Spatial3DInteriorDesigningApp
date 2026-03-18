@@ -139,7 +139,7 @@ async def stitch(
                         out_img = cv2.resize(out_img, (output_width, new_h), interpolation=cv2.INTER_AREA)
 
         # Compose mode: 4 pre-stitched wall panoramas arranged at 0°, 90°, 180°, 270°
-        # Fills each 90° sector with no black gaps; blends at seams for seamless panorama
+        # Uses overlapping blend zones at seams for smooth, seamless transitions
         use_compose = False
         if is_compose_mode:
             if len(paths) != 4:
@@ -158,10 +158,17 @@ async def stitch(
             imgs = [imgs[i] for i in sorted_indices]
             out_h = output_width // 2
             sector_w = output_width // 4
-            blend_px = min(64, sector_w // 4)  # Seam blend width
+            blend_px = min(256, sector_w // 2)  # Wide overlap for smooth, invisible seams
+
+            def _smooth_ramp(t: np.ndarray) -> np.ndarray:
+                """Smoothstep (3t² - 2t³) for soft transitions."""
+                t = np.clip(t, 0, 1).astype(np.float32)
+                return t * t * (3 - 2 * t)
 
             out_float = np.zeros((out_h, output_width, 3), dtype=np.float32)
             total_weight = np.zeros((out_h, output_width), dtype=np.float32)
+
+            out_x_arr = np.arange(output_width, dtype=np.float32)
 
             for i, img in enumerate(imgs):
                 h, w = img.shape[:2]
@@ -178,27 +185,58 @@ async def stitch(
                 crop_x = max(0, (new_w - sector_w) // 2)
                 crop_y = max(0, (new_h - out_h) // 2)
                 crop = resized[
-                    crop_y : crop_y + out_h,
-                    crop_x : crop_x + sector_w,
+                    crop_y : min(crop_y + out_h, new_h),
+                    crop_x : min(crop_x + sector_w, new_w),
                 ].astype(np.float32)
+                # Ensure exact (out_h, sector_w) for consistent accumulation
+                if crop.shape[0] != out_h or crop.shape[1] != sector_w:
+                    crop = cv2.resize(crop, (sector_w, out_h), interpolation=cv2.INTER_LANCZOS4).astype(np.float32)
 
                 x0 = i * sector_w
-                # Weight: 1 in center, smooth ramp to 0 at sector edges for seam blending
-                weight = np.ones((out_h, sector_w), dtype=np.float32)
-                if blend_px > 0:
-                    ramp = np.linspace(0, 1, blend_px)
-                    weight[:, :blend_px] *= ramp
-                    weight[:, -blend_px:] *= ramp[::-1]
+                x1 = (i + 1) * sector_w
+                left_bound = x0 - blend_px
+                right_bound = x1 + blend_px
 
-                out_float[:, x0 : x0 + sector_w] += crop * weight[:, :, np.newaxis]
-                total_weight[:, x0 : x0 + sector_w] += weight
+                # Weight: smoothstep for soft blending at seams
+                # Left overlap [x0-blend_px, x0]: weight 0→1 (blend with sector i-1)
+                # Center [x0, x1]: weight 1
+                # Right overlap [x1, x1+blend_px]: weight 1→0 (blend with sector i+1)
+                wgt = np.zeros(output_width, dtype=np.float32)
+                wgt[(out_x_arr >= x0) & (out_x_arr < x1)] = 1.0
+                mask_left = (out_x_arr >= left_bound) & (out_x_arr < x0)
+                t_left = (out_x_arr[mask_left] - left_bound) / blend_px if blend_px > 0 else np.ones(np.sum(mask_left))
+                wgt[mask_left] = _smooth_ramp(t_left)
+                mask_right = (out_x_arr >= x1) & (out_x_arr < right_bound)
+                t_right = (right_bound - out_x_arr[mask_right]) / blend_px if blend_px > 0 else np.ones(np.sum(mask_right))
+                wgt[mask_right] = _smooth_ramp(t_right)
+
+                # Map output x → crop column (with overlap sampling)
+                crop_col = np.clip(out_x_arr - x0, 0, sector_w - 1).astype(np.int32)
+                # Left overlap: sample from crop's left edge
+                crop_col[mask_left] = np.clip(
+                    (out_x_arr[mask_left] - left_bound).astype(np.int32), 0, sector_w - 1
+                )
+                # Right overlap: sample from crop's right edge (cols sector_w-blend_px .. sector_w-1)
+                rel_right = out_x_arr[mask_right] - x1
+                crop_col[mask_right] = np.clip(
+                    (sector_w - blend_px + rel_right).astype(np.int32), 0, sector_w - 1
+                )
+
+                # Zero weight outside this sector's contribution zone
+                wgt[out_x_arr < left_bound] = 0
+                wgt[out_x_arr >= right_bound] = 0
+
+                # Accumulate: crop[:, crop_col, :] → (out_h, output_width, 3)
+                contrib = crop[:, crop_col, :] * wgt[np.newaxis, :, np.newaxis]
+                out_float += contrib
+                total_weight += wgt
 
             # Normalize (avoid div by zero)
             mask = total_weight > 1e-6
             out_img = np.zeros((out_h, output_width, 3), dtype=np.uint8)
             out_img[mask] = (out_float[mask] / total_weight[mask, np.newaxis]).astype(np.uint8)
             use_compose = True
-            print(f"[/stitch] Compose mode: 4 wall panoramas → {output_width}x{out_h} equirectangular (seam blended)")
+            print(f"[/stitch] Compose mode: 4 wall panoramas → {output_width}x{out_h} (blend={blend_px}px)")
         if not use_wall_stitcher and not use_compose:
             out_img = stitch_equirectangular(
                 paths,
