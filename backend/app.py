@@ -158,23 +158,20 @@ async def stitch(
             imgs = [imgs[i] for i in sorted_indices]
             out_h = output_width // 2
             sector_w = output_width // 4
-            blend_px = min(256, sector_w // 2)  # Wide overlap for smooth, invisible seams
+            blend_px = min(220, sector_w // 2)  # Overlap for smooth seams (slightly reduced to limit blur)
+            vig_zone = min(320, sector_w // 2)  # Wider zone for vignette correction
 
             def _smooth_ramp(t: np.ndarray) -> np.ndarray:
                 """Smoothstep (3t² - 2t³) for soft transitions."""
                 t = np.clip(t, 0, 1).astype(np.float32)
                 return t * t * (3 - 2 * t)
 
-            out_float = np.zeros((out_h, output_width, 3), dtype=np.float32)
-            total_weight = np.zeros((out_h, output_width), dtype=np.float32)
-
-            out_x_arr = np.arange(output_width, dtype=np.float32)
-
+            # First pass: load and preprocess all crops (vignette correction)
+            crops_list = []
             for i, img in enumerate(imgs):
                 h, w = img.shape[:2]
                 if h <= 0 or w <= 0:
                     continue
-                # Scale to FILL sector (no black bars) – crop overflow
                 scale = max(sector_w / w, out_h / h)
                 new_w = int(w * scale)
                 new_h = int(h * scale)
@@ -188,10 +185,41 @@ async def stitch(
                     crop_y : min(crop_y + out_h, new_h),
                     crop_x : min(crop_x + sector_w, new_w),
                 ].astype(np.float32)
-                # Ensure exact (out_h, sector_w) for consistent accumulation
                 if crop.shape[0] != out_h or crop.shape[1] != sector_w:
                     crop = cv2.resize(crop, (sector_w, out_h), interpolation=cv2.INTER_LANCZOS4).astype(np.float32)
 
+                # Vignette correction: brighten edges (wider zone, stronger gain) to reduce shadow bands
+                edge_gain = 1.35
+                vig = np.ones((out_h, sector_w), dtype=np.float32)
+                for c in range(sector_w):
+                    if c < vig_zone and vig_zone > 0:
+                        t = c / vig_zone
+                        vig[:, c] = 1 + (edge_gain - 1) * (1 - _smooth_ramp(np.array([t]))[0])
+                    elif c >= sector_w - vig_zone and vig_zone > 0:
+                        t = (sector_w - 1 - c) / vig_zone
+                        vig[:, c] = 1 + (edge_gain - 1) * (1 - _smooth_ramp(np.array([t]))[0])
+                crop = np.clip(crop * vig[:, :, np.newaxis], 0, 255).astype(np.float32)
+                crops_list.append(crop)
+
+            # Exposure matching: align brightness at seams to reduce color/tonal jumps
+            def _luma(c: np.ndarray) -> float:
+                return float(np.mean(0.299 * c[:, :, 0] + 0.587 * c[:, :, 1] + 0.114 * c[:, :, 2]))
+
+            for i in range(len(crops_list) - 1):
+                left_edge = crops_list[i][:, -blend_px:, :] if blend_px > 0 else crops_list[i][:, -1:, :]
+                right_edge = crops_list[i + 1][:, :blend_px, :] if blend_px > 0 else crops_list[i + 1][:, :1, :]
+                mean_l = _luma(left_edge)
+                mean_r = _luma(right_edge)
+                if mean_r > 1e-6:
+                    scale = mean_l / mean_r
+                    scale = np.clip(scale, 0.7, 1.4)  # Avoid over-correction
+                    crops_list[i + 1] = np.clip(crops_list[i + 1] * scale, 0, 255).astype(np.float32)
+
+            out_float = np.zeros((out_h, output_width, 3), dtype=np.float32)
+            total_weight = np.zeros((out_h, output_width), dtype=np.float32)
+            out_x_arr = np.arange(output_width, dtype=np.float32)
+
+            for i, crop in enumerate(crops_list):
                 x0 = i * sector_w
                 x1 = (i + 1) * sector_w
                 left_bound = x0 - blend_px
