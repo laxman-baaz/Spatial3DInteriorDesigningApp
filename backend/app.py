@@ -38,6 +38,8 @@ from stitch_equirect import (
     FOV_V_DEG,
 )
 from nanobanana import stage_panorama as nb_stage_panorama
+from nanobanana import stitch_panorama_google as nb_stitch_panorama
+from nanobanana import STITCH_PANORAMA_PROMPT
 from worldlabs import reconstruct_world, WorldResult
 
 app = FastAPI(
@@ -69,7 +71,7 @@ async def stitch(
     ),
     output_width: int = Form(4096, description="Equirectangular width (height = width/2)"),
     force_full_360: bool = Form(False, description="If true, output always 360×180 (2:1) for e.g. WorldLabs 3D; uncaptured areas black"),
-    mode: str = Form("full", description="'full' for 27-dot photosphere; 'wall' for single-wall 2–5 images; 'compose' for 4 pre-stitched wall panoramas"),
+    mode: str = Form("full", description="'full' for 27-dot photosphere; 'wall' for single-wall 2–5 images; 'nanobanana' for AI stitching of 4 walls via Gemini"),
 ):
     """
     Upload images and their poses; returns stitched equirectangular panorama as JPEG.
@@ -84,10 +86,10 @@ async def stitch(
     received_mode = (mode or "").strip().lower()
     n_imgs = len(images)
     print(f"[/stitch] Received: mode={received_mode!r}, images={n_imgs}")
-    if received_mode != "compose" and n_imgs > 4:
+    if received_mode != "nanobanana" and n_imgs > 4:
         print(
-            f"[/stitch] HINT: Room Scan should use mode=compose with 4 wall panoramas, "
-            f"not {n_imgs} raw images. Rebuild the app if using Wall Scan flow."
+            f"[/stitch] HINT: Room Scan uses mode=nanobanana with 4 wall panoramas, "
+            f"not {n_imgs} raw images."
         )
 
     if len(images) < 1:
@@ -103,7 +105,43 @@ async def stitch(
     rolls = [float(p.get("roll", 0.0)) for p in poses]  # Default 0 for backwards compatibility
 
     is_wall_mode = (mode or "").strip().lower() == "wall"
-    is_compose_mode = (mode or "").strip().lower() == "compose"
+    is_nanobanana_mode = (mode or "").strip().lower() == "nanobanana"
+
+    # NanoBanana 2 (Gemini) AI stitching: 4 wall images → seamless panorama
+    if is_nanobanana_mode:
+        if len(images) != 4:
+            raise HTTPException(
+                status_code=400,
+                detail="NanoBanana mode requires exactly 4 images (one per wall)",
+            )
+        google_key = os.environ.get("GOOGLE_API_KEY", "").strip()
+        if not google_key:
+            raise HTTPException(
+                status_code=503,
+                detail="GOOGLE_API_KEY required for NanoBanana stitching. Set it in backend/.env",
+            )
+        try:
+            img_bytes_list = [await img.read() for img in images]
+            out_bytes = nb_stitch_panorama(img_bytes_list, STITCH_PANORAMA_PROMPT, google_key)
+        except TimeoutError as e:
+            raise HTTPException(status_code=504, detail=str(e))
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            raise HTTPException(status_code=500, detail=f"NanoBanana stitching failed: {e}")
+
+        save_id = str(uuid.uuid4())
+        save_path = OUTPUT_DIR / f"panorama_{save_id}.jpg"
+        save_path.write_bytes(out_bytes)
+        print(f"[/stitch] NanoBanana stitch saved → {save_path}")
+        return Response(
+            content=out_bytes,
+            media_type="image/jpeg",
+            headers={
+                "X-Panorama-Id": save_id,
+                "X-Panorama-Path": str(save_path),
+            },
+        )
 
     tmp_dir = Path(tempfile.mkdtemp())
     paths = []
@@ -138,134 +176,7 @@ async def stitch(
                         new_h = int(h * scale)
                         out_img = cv2.resize(out_img, (output_width, new_h), interpolation=cv2.INTER_AREA)
 
-        # Compose mode: 4 pre-stitched wall panoramas arranged at 0°, 90°, 180°, 270°
-        # Uses overlapping blend zones at seams for smooth, seamless transitions
-        use_compose = False
-        if is_compose_mode:
-            if len(paths) != 4:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Compose mode requires exactly 4 images (one per wall)",
-                )
-            imgs = [cv2.imread(p) for p in paths]
-            if not all(im is not None for im in imgs):
-                raise HTTPException(
-                    status_code=400,
-                    detail="Failed to load one or more wall panorama images",
-                )
-            # Sort by yaw so we get 0, 90, 180, 270 order
-            sorted_indices = sorted(range(4), key=lambda i: (yaws[i] % 360))
-            imgs = [imgs[i] for i in sorted_indices]
-            out_h = output_width // 2
-            sector_w = output_width // 4
-            blend_px = min(220, sector_w // 2)  # Overlap for smooth seams (slightly reduced to limit blur)
-            vig_zone = min(320, sector_w // 2)  # Wider zone for vignette correction
-
-            def _smooth_ramp(t: np.ndarray) -> np.ndarray:
-                """Smoothstep (3t² - 2t³) for soft transitions."""
-                t = np.clip(t, 0, 1).astype(np.float32)
-                return t * t * (3 - 2 * t)
-
-            # First pass: load and preprocess all crops (vignette correction)
-            crops_list = []
-            for i, img in enumerate(imgs):
-                h, w = img.shape[:2]
-                if h <= 0 or w <= 0:
-                    continue
-                scale = max(sector_w / w, out_h / h)
-                new_w = int(w * scale)
-                new_h = int(h * scale)
-                resized = cv2.resize(
-                    img, (new_w, new_h),
-                    interpolation=cv2.INTER_LANCZOS4,
-                )
-                crop_x = max(0, (new_w - sector_w) // 2)
-                crop_y = max(0, (new_h - out_h) // 2)
-                crop = resized[
-                    crop_y : min(crop_y + out_h, new_h),
-                    crop_x : min(crop_x + sector_w, new_w),
-                ].astype(np.float32)
-                if crop.shape[0] != out_h or crop.shape[1] != sector_w:
-                    crop = cv2.resize(crop, (sector_w, out_h), interpolation=cv2.INTER_LANCZOS4).astype(np.float32)
-
-                # Vignette correction: brighten edges (wider zone, stronger gain) to reduce shadow bands
-                edge_gain = 1.35
-                vig = np.ones((out_h, sector_w), dtype=np.float32)
-                for c in range(sector_w):
-                    if c < vig_zone and vig_zone > 0:
-                        t = c / vig_zone
-                        vig[:, c] = 1 + (edge_gain - 1) * (1 - _smooth_ramp(np.array([t]))[0])
-                    elif c >= sector_w - vig_zone and vig_zone > 0:
-                        t = (sector_w - 1 - c) / vig_zone
-                        vig[:, c] = 1 + (edge_gain - 1) * (1 - _smooth_ramp(np.array([t]))[0])
-                crop = np.clip(crop * vig[:, :, np.newaxis], 0, 255).astype(np.float32)
-                crops_list.append(crop)
-
-            # Exposure matching: align brightness at seams to reduce color/tonal jumps
-            def _luma(c: np.ndarray) -> float:
-                return float(np.mean(0.299 * c[:, :, 0] + 0.587 * c[:, :, 1] + 0.114 * c[:, :, 2]))
-
-            for i in range(len(crops_list) - 1):
-                left_edge = crops_list[i][:, -blend_px:, :] if blend_px > 0 else crops_list[i][:, -1:, :]
-                right_edge = crops_list[i + 1][:, :blend_px, :] if blend_px > 0 else crops_list[i + 1][:, :1, :]
-                mean_l = _luma(left_edge)
-                mean_r = _luma(right_edge)
-                if mean_r > 1e-6:
-                    scale = mean_l / mean_r
-                    scale = np.clip(scale, 0.7, 1.4)  # Avoid over-correction
-                    crops_list[i + 1] = np.clip(crops_list[i + 1] * scale, 0, 255).astype(np.float32)
-
-            out_float = np.zeros((out_h, output_width, 3), dtype=np.float32)
-            total_weight = np.zeros((out_h, output_width), dtype=np.float32)
-            out_x_arr = np.arange(output_width, dtype=np.float32)
-
-            for i, crop in enumerate(crops_list):
-                x0 = i * sector_w
-                x1 = (i + 1) * sector_w
-                left_bound = x0 - blend_px
-                right_bound = x1 + blend_px
-
-                # Weight: smoothstep for soft blending at seams
-                # Left overlap [x0-blend_px, x0]: weight 0→1 (blend with sector i-1)
-                # Center [x0, x1]: weight 1
-                # Right overlap [x1, x1+blend_px]: weight 1→0 (blend with sector i+1)
-                wgt = np.zeros(output_width, dtype=np.float32)
-                wgt[(out_x_arr >= x0) & (out_x_arr < x1)] = 1.0
-                mask_left = (out_x_arr >= left_bound) & (out_x_arr < x0)
-                t_left = (out_x_arr[mask_left] - left_bound) / blend_px if blend_px > 0 else np.ones(np.sum(mask_left))
-                wgt[mask_left] = _smooth_ramp(t_left)
-                mask_right = (out_x_arr >= x1) & (out_x_arr < right_bound)
-                t_right = (right_bound - out_x_arr[mask_right]) / blend_px if blend_px > 0 else np.ones(np.sum(mask_right))
-                wgt[mask_right] = _smooth_ramp(t_right)
-
-                # Map output x → crop column (with overlap sampling)
-                crop_col = np.clip(out_x_arr - x0, 0, sector_w - 1).astype(np.int32)
-                # Left overlap: sample from crop's left edge
-                crop_col[mask_left] = np.clip(
-                    (out_x_arr[mask_left] - left_bound).astype(np.int32), 0, sector_w - 1
-                )
-                # Right overlap: sample from crop's right edge (cols sector_w-blend_px .. sector_w-1)
-                rel_right = out_x_arr[mask_right] - x1
-                crop_col[mask_right] = np.clip(
-                    (sector_w - blend_px + rel_right).astype(np.int32), 0, sector_w - 1
-                )
-
-                # Zero weight outside this sector's contribution zone
-                wgt[out_x_arr < left_bound] = 0
-                wgt[out_x_arr >= right_bound] = 0
-
-                # Accumulate: crop[:, crop_col, :] → (out_h, output_width, 3)
-                contrib = crop[:, crop_col, :] * wgt[np.newaxis, :, np.newaxis]
-                out_float += contrib
-                total_weight += wgt
-
-            # Normalize (avoid div by zero)
-            mask = total_weight > 1e-6
-            out_img = np.zeros((out_h, output_width, 3), dtype=np.uint8)
-            out_img[mask] = (out_float[mask] / total_weight[mask, np.newaxis]).astype(np.uint8)
-            use_compose = True
-            print(f"[/stitch] Compose mode: 4 wall panoramas → {output_width}x{out_h} (blend={blend_px}px)")
-        if not use_wall_stitcher and not use_compose:
+        if not use_wall_stitcher:
             out_img = stitch_equirectangular(
                 paths,
                 pitches,
@@ -282,9 +193,8 @@ async def stitch(
                 num_columns=9,
             )
 
-        # Post-stitch undistort: skip for wall/compose mode to avoid adding distortion.
-        # Full mode: mild pass to clean residual curvature.
-        if not is_wall_mode and not use_compose:
+        # Post-stitch undistort: skip for wall mode to avoid adding distortion.
+        if not is_wall_mode:
             out_img = undistort_panorama(
                 out_img,
                 camera_matrix=None,

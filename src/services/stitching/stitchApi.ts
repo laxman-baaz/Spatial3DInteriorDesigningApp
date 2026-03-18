@@ -38,7 +38,7 @@ export async function stitchPanoramaViaApi(
   options: {
     outputWidth?: number;
     forceFull360?: boolean;
-    mode?: 'full' | 'wall' | 'compose';
+    mode?: 'full' | 'wall' | 'nanobanana';
     composeImages?: StitchApiComposeImage[];
   } = {},
 ): Promise<StitchApiResult> {
@@ -48,14 +48,14 @@ export async function stitchPanoramaViaApi(
   const mode = options.mode ?? 'full';
   const composeImages = options.composeImages;
   const url = getStitchApiUrl('/stitch');
-  const isCompose = mode === 'compose' && composeImages && composeImages.length === 4;
-  const imageCount = isCompose ? 4 : images.length;
+  const isNanobanana = mode === 'nanobanana' && composeImages && composeImages.length === 4;
+  const imageCount = isNanobanana ? 4 : images.length;
 
   console.log(
     `${LOG_TAG} Calling POST ${url} with ${imageCount} image(s), outputWidth=${outputWidth}, forceFull360=${forceFull360}, mode=${mode}`,
   );
 
-  if (!isCompose && images.length < 1) {
+  if (!isNanobanana && images.length < 1) {
     console.log(`${LOG_TAG} Abort: no images`);
     return {
       success: false,
@@ -64,17 +64,17 @@ export async function stitchPanoramaViaApi(
     };
   }
 
-  if (isCompose && composeImages!.length !== 4) {
+  if (isNanobanana && composeImages!.length !== 4) {
     return {
       success: false,
-      error: 'Compose mode requires exactly 4 wall panoramas',
+      error: 'NanoBanana mode requires exactly 4 wall panoramas',
       durationMs: Date.now() - start,
     };
   }
 
-  // For compose: resolve data URLs to temp file paths
+  // For nanobanana: resolve data URLs to temp file paths
   const resolvedPaths: string[] = [];
-  if (isCompose) {
+  if (isNanobanana) {
     const cacheDir = ReactNativeBlobUtil.fs.dirs.CacheDir;
     for (let i = 0; i < 4; i++) {
       const item = composeImages![i];
@@ -97,7 +97,7 @@ export async function stitchPanoramaViaApi(
     }
   }
 
-  const posesJson = isCompose
+  const posesJson = isNanobanana
     ? JSON.stringify(
         composeImages!.map(img => ({pitch: 90, yaw: img.yaw, roll: 0})),
       )
@@ -110,7 +110,7 @@ export async function stitchPanoramaViaApi(
     {name: 'output_width', data: String(outputWidth)},
     {name: 'force_full_360', data: forceFull360 ? 'true' : 'false'},
     {name: 'mode', data: mode},
-    ...(isCompose
+    ...(isNanobanana
       ? resolvedPaths.map((path, i) => ({
           name: 'images',
           filename: `wall_${i}.jpg`,

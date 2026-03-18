@@ -56,7 +56,7 @@ export default function WallScanScreen({navigation}: any) {
   const handleCreatePanorama = async () => {
     if (isStitching) return;
 
-    // Prefer compose mode: use final stitched output of each wall (4 pre-stitched panoramas)
+    // NanoBanana 2: AI stitching of 4 wall outputs into seamless 360° panorama
     const allFourStitched =
       wallStitchedResults.wall1 &&
       wallStitchedResults.wall2 &&
@@ -64,14 +64,14 @@ export default function WallScanScreen({navigation}: any) {
       wallStitchedResults.wall4;
 
     if (allFourStitched) {
-      // Use compose mode: stitch the 4 wall outputs into a seamless 360° panorama
-      console.log('[WallScan] Compose: using 4 wall stitched results for 360° panorama');
+      // Use NanoBanana 2 (Gemini) AI to stitch 4 wall outputs into a seamless 360° panorama
+      console.log('[WallScan] NanoBanana: using 4 wall stitched results for AI panorama');
       setIsStitching(true);
       try {
         const result = await stitchPanoramaViaApi([], {
           outputWidth: 4096,
           forceFull360: true,
-          mode: 'compose',
+          mode: 'nanobanana',
           composeImages: [
             {pathOrDataUrl: wallStitchedResults.wall1!, yaw: 0},
             {pathOrDataUrl: wallStitchedResults.wall2!, yaw: 90},
@@ -102,7 +102,7 @@ export default function WallScanScreen({navigation}: any) {
           Alert.alert('Stitching failed', result.error ?? 'Unknown error');
         }
       } catch (e) {
-        console.error('[WallScan] Compose error:', e);
+        console.error('[WallScan] NanoBanana stitch error:', e);
         Alert.alert(
           'Stitching failed',
           e instanceof Error ? e.message : String(e),
