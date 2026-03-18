@@ -81,6 +81,15 @@ async def stitch(
     except json.JSONDecodeError as e:
         raise HTTPException(status_code=400, detail=f"Invalid poses_json: {e}")
 
+    received_mode = (mode or "").strip().lower()
+    n_imgs = len(images)
+    print(f"[/stitch] Received: mode={received_mode!r}, images={n_imgs}")
+    if received_mode != "compose" and n_imgs > 4:
+        print(
+            f"[/stitch] HINT: Room Scan should use mode=compose with 4 wall panoramas, "
+            f"not {n_imgs} raw images. Rebuild the app if using Wall Scan flow."
+        )
+
     if len(images) < 1:
         raise HTTPException(status_code=400, detail="At least 1 image required")
     if len(images) != len(poses):
@@ -130,6 +139,7 @@ async def stitch(
                         out_img = cv2.resize(out_img, (output_width, new_h), interpolation=cv2.INTER_AREA)
 
         # Compose mode: 4 pre-stitched wall panoramas arranged at 0°, 90°, 180°, 270°
+        # Fills each 90° sector with no black gaps; blends at seams for seamless panorama
         use_compose = False
         if is_compose_mode:
             if len(paths) != 4:
@@ -148,24 +158,47 @@ async def stitch(
             imgs = [imgs[i] for i in sorted_indices]
             out_h = output_width // 2
             sector_w = output_width // 4
-            out_img = np.zeros((out_h, output_width, 3), dtype=np.uint8)
+            blend_px = min(64, sector_w // 4)  # Seam blend width
+
+            out_float = np.zeros((out_h, output_width, 3), dtype=np.float32)
+            total_weight = np.zeros((out_h, output_width), dtype=np.float32)
+
             for i, img in enumerate(imgs):
                 h, w = img.shape[:2]
-                if h > 0 and w > 0:
-                    # Preserve aspect ratio: fit within sector, then center (avoids squeezed look)
-                    scale = min(sector_w / w, out_h / h)
-                    new_w = int(w * scale)
-                    new_h = int(h * scale)
-                    resized = cv2.resize(
-                        img, (new_w, new_h),
-                        interpolation=cv2.INTER_AREA,
-                    )
-                    x0 = i * sector_w
-                    x_off = (sector_w - new_w) // 2
-                    y_off = (out_h - new_h) // 2
-                    out_img[y_off : y_off + new_h, x0 + x_off : x0 + x_off + new_w] = resized
+                if h <= 0 or w <= 0:
+                    continue
+                # Scale to FILL sector (no black bars) – crop overflow
+                scale = max(sector_w / w, out_h / h)
+                new_w = int(w * scale)
+                new_h = int(h * scale)
+                resized = cv2.resize(
+                    img, (new_w, new_h),
+                    interpolation=cv2.INTER_LANCZOS4,
+                )
+                crop_x = max(0, (new_w - sector_w) // 2)
+                crop_y = max(0, (new_h - out_h) // 2)
+                crop = resized[
+                    crop_y : crop_y + out_h,
+                    crop_x : crop_x + sector_w,
+                ].astype(np.float32)
+
+                x0 = i * sector_w
+                # Weight: 1 in center, smooth ramp to 0 at sector edges for seam blending
+                weight = np.ones((out_h, sector_w), dtype=np.float32)
+                if blend_px > 0:
+                    ramp = np.linspace(0, 1, blend_px)
+                    weight[:, :blend_px] *= ramp
+                    weight[:, -blend_px:] *= ramp[::-1]
+
+                out_float[:, x0 : x0 + sector_w] += crop * weight[:, :, np.newaxis]
+                total_weight[:, x0 : x0 + sector_w] += weight
+
+            # Normalize (avoid div by zero)
+            mask = total_weight > 1e-6
+            out_img = np.zeros((out_h, output_width, 3), dtype=np.uint8)
+            out_img[mask] = (out_float[mask] / total_weight[mask, np.newaxis]).astype(np.uint8)
             use_compose = True
-            print(f"[/stitch] Compose mode: 4 wall panoramas → {output_width}x{out_h} equirectangular")
+            print(f"[/stitch] Compose mode: 4 wall panoramas → {output_width}x{out_h} equirectangular (seam blended)")
         if not use_wall_stitcher and not use_compose:
             out_img = stitch_equirectangular(
                 paths,

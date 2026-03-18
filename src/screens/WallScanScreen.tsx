@@ -31,7 +31,12 @@ const WALL_YAW_OFFSET: Record<string, number> = {
 };
 
 export default function WallScanScreen({navigation}: any) {
-  const {wallImages, wallStitchedResults, totalCount} = useRoomScan();
+  const {wallImages, wallStitchedResults} = useRoomScan();
+  const canCreatePanorama =
+    !!wallStitchedResults.wall1 &&
+    !!wallStitchedResults.wall2 &&
+    !!wallStitchedResults.wall3 &&
+    !!wallStitchedResults.wall4;
   const [isStitching, setIsStitching] = useState(false);
   const [viewerWall, setViewerWall] = useState<WallId | null>(null);
 
@@ -49,68 +54,73 @@ export default function WallScanScreen({navigation}: any) {
   };
 
   const handleCreatePanorama = async () => {
-    if (isStitching || totalCount === 0) return;
+    if (isStitching) return;
 
-    // Build stitch payload: all images with wall-specific yaw offset
-    const allImages: {path: string; pitch: number; yaw: number; roll: number}[] = [];
-    for (const wall of WALLS) {
-      const offset = WALL_YAW_OFFSET[wall.id];
-      for (const img of wallImages[wall.id]) {
-        allImages.push({
-          path: img.imagePath,
-          pitch: img.pitch,
-          yaw: (img.yaw + offset) % 360,
-          roll: img.roll,
+    // Prefer compose mode: use final stitched output of each wall (4 pre-stitched panoramas)
+    const allFourStitched =
+      wallStitchedResults.wall1 &&
+      wallStitchedResults.wall2 &&
+      wallStitchedResults.wall3 &&
+      wallStitchedResults.wall4;
+
+    if (allFourStitched) {
+      // Use compose mode: stitch the 4 wall outputs into a seamless 360° panorama
+      console.log('[WallScan] Compose: using 4 wall stitched results for 360° panorama');
+      setIsStitching(true);
+      try {
+        const result = await stitchPanoramaViaApi([], {
+          outputWidth: 4096,
+          forceFull360: true,
+          mode: 'compose',
+          composeImages: [
+            {pathOrDataUrl: wallStitchedResults.wall1!, yaw: 0},
+            {pathOrDataUrl: wallStitchedResults.wall2!, yaw: 90},
+            {pathOrDataUrl: wallStitchedResults.wall3!, yaw: 180},
+            {pathOrDataUrl: wallStitchedResults.wall4!, yaw: 270},
+          ],
         });
+        if (result.success) {
+          const id = result.panoramaId ?? `pano_${Date.now()}`;
+          const base64 = result.imageData
+            ? dataUrlToBase64(result.imageData)
+            : null;
+          if (base64) {
+            await savePanorama(id, base64);
+          }
+          const time =
+            result.durationMs != null
+              ? ` (${Math.round(result.durationMs / 1000)}s)`
+              : '';
+          Alert.alert(
+            'Panorama ready',
+            base64
+              ? `Saved to Recent Projects & 3D Gallery.${time}`
+              : `Stitched successfully.${time}`,
+          );
+          navigation.goBack();
+        } else {
+          Alert.alert('Stitching failed', result.error ?? 'Unknown error');
+        }
+      } catch (e) {
+        console.error('[WallScan] Compose error:', e);
+        Alert.alert(
+          'Stitching failed',
+          e instanceof Error ? e.message : String(e),
+        );
+      } finally {
+        setIsStitching(false);
       }
-    }
-
-    if (allImages.length === 0) {
-      Alert.alert(
-        'Capture first',
-        'Tap each wall card to capture images. Capture at least a few images per wall for best results.',
-      );
       return;
     }
 
-    console.log('[WallScan] Stitch: sending', allImages.length, 'images from all walls');
-    setIsStitching(true);
-    try {
-      const result = await stitchPanoramaViaApi(allImages, {
-        outputWidth: 4096,
-        forceFull360: true,
-      });
-
-      if (result.success) {
-        const id = result.panoramaId ?? `pano_${Date.now()}`;
-        const base64 = result.imageData
-          ? dataUrlToBase64(result.imageData)
-          : null;
-        if (base64) {
-          await savePanorama(id, base64);
-        }
-        const time =
-          result.durationMs != null
-            ? ` (${Math.round(result.durationMs / 1000)}s)`
-            : '';
-        Alert.alert(
-          'Panorama ready',
-          base64
-            ? `Saved to Recent Projects & 3D Gallery.${time}`
-            : `Stitched successfully.${time}`,
-        );
-        navigation.goBack();
-      } else {
-        Alert.alert('Stitching failed', result.error ?? 'Unknown error');
-      }
-    } catch (e) {
-      console.error('[WallScan] Stitch error:', e);
+    // Require all 4 walls to be captured and stitched
+    const missingWalls = WALLS.filter(w => !wallStitchedResults[w.id]);
+    if (missingWalls.length > 0) {
       Alert.alert(
-        'Stitching failed',
-        e instanceof Error ? e.message : String(e),
+        'Complete all walls',
+        `Capture and stitch these walls first: ${missingWalls.map(w => w.label).join(', ')}. The 360° panorama uses the final stitched output of each side for best quality.`,
       );
-    } finally {
-      setIsStitching(false);
+      return;
     }
   };
 
@@ -187,11 +197,11 @@ export default function WallScanScreen({navigation}: any) {
         <TouchableOpacity
           style={[
             styles.stitchButton,
-            (isStitching || totalCount === 0) && styles.stitchButtonDisabled,
+            (isStitching || !canCreatePanorama) && styles.stitchButtonDisabled,
           ]}
-          onPress={totalCount > 0 ? handleCreatePanorama : () => Alert.alert(
-            'Capture first',
-            'Tap each wall card to capture images. Capture at least a few images per wall for best results.',
+          onPress={canCreatePanorama ? handleCreatePanorama : () => Alert.alert(
+            'Capture all walls',
+            'Tap each wall card to capture and stitch. You need all 4 walls stitched before creating the 360° panorama.',
           )}
           disabled={isStitching}
           activeOpacity={0.8}>
@@ -201,7 +211,7 @@ export default function WallScanScreen({navigation}: any) {
             <>
               <Icon name="images" size={20} color="#fff" style={styles.stitchIcon} />
               <Text style={styles.stitchButtonText}>
-                Create panorama {totalCount > 0 ? `(${totalCount})` : ''}
+                Create 360° panorama {canCreatePanorama ? '(ready)' : '(4 walls needed)'}
               </Text>
             </>
           )}

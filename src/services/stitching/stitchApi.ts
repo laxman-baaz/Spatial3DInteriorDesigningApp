@@ -4,6 +4,7 @@
  */
 import {getStitchApiUrl} from '../../config';
 import ReactNativeBlobUtil from 'react-native-blob-util';
+import {dataUrlToBase64} from '../panoramaStorage';
 
 const LOG_TAG = '[StitchAPI]';
 
@@ -26,25 +27,35 @@ export interface StitchApiImage {
 /**
  * Upload images + poses to backend; returns stitched panorama result.
  */
+export interface StitchApiComposeImage {
+  /** file path or data URL (data:image/jpeg;base64,...) */
+  pathOrDataUrl: string;
+  yaw: number; // 0, 90, 180, 270 for wall1–4
+}
+
 export async function stitchPanoramaViaApi(
   images: StitchApiImage[],
   options: {
     outputWidth?: number;
     forceFull360?: boolean;
-    mode?: 'full' | 'wall';
+    mode?: 'full' | 'wall' | 'compose';
+    composeImages?: StitchApiComposeImage[];
   } = {},
 ): Promise<StitchApiResult> {
   const start = Date.now();
   const outputWidth = options.outputWidth ?? 4096;
   const forceFull360 = options.forceFull360 ?? false;
   const mode = options.mode ?? 'full';
+  const composeImages = options.composeImages;
   const url = getStitchApiUrl('/stitch');
+  const isCompose = mode === 'compose' && composeImages && composeImages.length === 4;
+  const imageCount = isCompose ? 4 : images.length;
 
   console.log(
-    `${LOG_TAG} Calling POST ${url} with ${images.length} image(s), outputWidth=${outputWidth}, forceFull360=${forceFull360}, mode=${mode}`,
+    `${LOG_TAG} Calling POST ${url} with ${imageCount} image(s), outputWidth=${outputWidth}, forceFull360=${forceFull360}, mode=${mode}`,
   );
 
-  if (images.length < 1) {
+  if (!isCompose && images.length < 1) {
     console.log(`${LOG_TAG} Abort: no images`);
     return {
       success: false,
@@ -53,21 +64,65 @@ export async function stitchPanoramaViaApi(
     };
   }
 
-  const posesJson = JSON.stringify(
-    images.map(img => ({pitch: img.pitch, yaw: img.yaw, roll: img.roll})),
-  );
+  if (isCompose && composeImages!.length !== 4) {
+    return {
+      success: false,
+      error: 'Compose mode requires exactly 4 wall panoramas',
+      durationMs: Date.now() - start,
+    };
+  }
+
+  // For compose: resolve data URLs to temp file paths
+  const resolvedPaths: string[] = [];
+  if (isCompose) {
+    const cacheDir = ReactNativeBlobUtil.fs.dirs.CacheDir;
+    for (let i = 0; i < 4; i++) {
+      const item = composeImages![i];
+      const pathOrDataUrl = item.pathOrDataUrl;
+      if (pathOrDataUrl.startsWith('data:')) {
+        const base64 = dataUrlToBase64(pathOrDataUrl);
+        if (!base64) {
+          return {
+            success: false,
+            error: `Invalid data URL for wall ${i + 1}`,
+            durationMs: Date.now() - start,
+          };
+        }
+        const tmpPath = `${cacheDir}/compose_wall_${i}_${Date.now()}.jpg`;
+        await ReactNativeBlobUtil.fs.writeFile(tmpPath, base64, 'base64');
+        resolvedPaths.push(tmpPath);
+      } else {
+        resolvedPaths.push(pathOrDataUrl.replace(/^file:\/\//, ''));
+      }
+    }
+  }
+
+  const posesJson = isCompose
+    ? JSON.stringify(
+        composeImages!.map(img => ({pitch: 90, yaw: img.yaw, roll: 0})),
+      )
+    : JSON.stringify(
+        images.map(img => ({pitch: img.pitch, yaw: img.yaw, roll: img.roll})),
+      );
 
   const body = [
     {name: 'poses_json', data: posesJson},
     {name: 'output_width', data: String(outputWidth)},
     {name: 'force_full_360', data: forceFull360 ? 'true' : 'false'},
     {name: 'mode', data: mode},
-    ...images.map((img, i) => ({
-      name: 'images',
-      filename: `img_${i}.jpg`,
-      type: 'image/jpeg',
-      data: ReactNativeBlobUtil.wrap(img.path.replace(/^file:\/\//, '')),
-    })),
+    ...(isCompose
+      ? resolvedPaths.map((path, i) => ({
+          name: 'images',
+          filename: `wall_${i}.jpg`,
+          type: 'image/jpeg',
+          data: ReactNativeBlobUtil.wrap(path),
+        }))
+      : images.map((img, i) => ({
+          name: 'images',
+          filename: `img_${i}.jpg`,
+          type: 'image/jpeg',
+          data: ReactNativeBlobUtil.wrap(img.path.replace(/^file:\/\//, '')),
+        }))),
   ];
 
   try {
