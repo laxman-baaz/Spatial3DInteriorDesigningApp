@@ -64,6 +64,7 @@ export async function stageWithAI(
 
   if (status < 200 || status >= 300) {
     const body = resp.text();
+    console.log(`${LOG} error body: ${body}`);
     throw new Error(`/stage returned HTTP ${status}: ${body}`);
   }
 

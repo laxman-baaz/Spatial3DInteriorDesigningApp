@@ -8,8 +8,9 @@ Endpoints:
   GET  /health      – health check
 
 Environment variables (set in backend/.env):
-  NANOBANANA_API_KEY  – from https://nanobananaapi.ai/api-key
-  IMGBB_API_KEY       – from https://imgbb.com
+  GOOGLE_API_KEY      – from https://aistudio.google.com/apikey (for image staging)
+  NANOBANANA_API_KEY  – from https://nanobananaapi.ai/api-key (alternative)
+  IMGBB_API_KEY       – from https://imgbb.com (required only with NANOBANANA)
   WORLDLABS_API_KEY   – from https://platform.worldlabs.ai/api-keys
 """
 import json
@@ -26,6 +27,7 @@ except ImportError:
     pass  # dotenv optional – keys can still be set as OS env vars
 
 import cv2
+import numpy as np
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response
 
@@ -45,8 +47,12 @@ app = FastAPI(
 )
 
 # Optional: persist stitched panoramas under this dir (e.g. for AsyncStorage / cards)
-OUTPUT_DIR = Path(os.environ.get("PANORAMA_OUTPUT_DIR", tempfile.gettempdir()))
+# Default: backend/output so Walls folder is visible in the project
+_DEFAULT_OUTPUT = Path(__file__).parent / "output"
+OUTPUT_DIR = Path(os.environ.get("PANORAMA_OUTPUT_DIR", str(_DEFAULT_OUTPUT)))
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+WALLS_DIR = OUTPUT_DIR / "Walls"
+WALLS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 @app.get("/")
@@ -63,7 +69,7 @@ async def stitch(
     ),
     output_width: int = Form(4096, description="Equirectangular width (height = width/2)"),
     force_full_360: bool = Form(False, description="If true, output always 360×180 (2:1) for e.g. WorldLabs 3D; uncaptured areas black"),
-    mode: str = Form("full", description="'full' for 27-dot photosphere; 'wall' for single-wall 2–5 images (reduces drift/distortion)"),
+    mode: str = Form("full", description="'full' for 27-dot photosphere; 'wall' for single-wall 2–5 images; 'compose' for 4 pre-stitched wall panoramas"),
 ):
     """
     Upload images and their poses; returns stitched equirectangular panorama as JPEG.
@@ -88,6 +94,7 @@ async def stitch(
     rolls = [float(p.get("roll", 0.0)) for p in poses]  # Default 0 for backwards compatibility
 
     is_wall_mode = (mode or "").strip().lower() == "wall"
+    is_compose_mode = (mode or "").strip().lower() == "compose"
 
     tmp_dir = Path(tempfile.mkdtemp())
     paths = []
@@ -122,7 +129,44 @@ async def stitch(
                         new_h = int(h * scale)
                         out_img = cv2.resize(out_img, (output_width, new_h), interpolation=cv2.INTER_AREA)
 
-        if not use_wall_stitcher:
+        # Compose mode: 4 pre-stitched wall panoramas arranged at 0°, 90°, 180°, 270°
+        use_compose = False
+        if is_compose_mode:
+            if len(paths) != 4:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Compose mode requires exactly 4 images (one per wall)",
+                )
+            imgs = [cv2.imread(p) for p in paths]
+            if not all(im is not None for im in imgs):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Failed to load one or more wall panorama images",
+                )
+            # Sort by yaw so we get 0, 90, 180, 270 order
+            sorted_indices = sorted(range(4), key=lambda i: (yaws[i] % 360))
+            imgs = [imgs[i] for i in sorted_indices]
+            out_h = output_width // 2
+            sector_w = output_width // 4
+            out_img = np.zeros((out_h, output_width, 3), dtype=np.uint8)
+            for i, img in enumerate(imgs):
+                h, w = img.shape[:2]
+                if h > 0 and w > 0:
+                    # Preserve aspect ratio: fit within sector, then center (avoids squeezed look)
+                    scale = min(sector_w / w, out_h / h)
+                    new_w = int(w * scale)
+                    new_h = int(h * scale)
+                    resized = cv2.resize(
+                        img, (new_w, new_h),
+                        interpolation=cv2.INTER_AREA,
+                    )
+                    x0 = i * sector_w
+                    x_off = (sector_w - new_w) // 2
+                    y_off = (out_h - new_h) // 2
+                    out_img[y_off : y_off + new_h, x0 + x_off : x0 + x_off + new_w] = resized
+            use_compose = True
+            print(f"[/stitch] Compose mode: 4 wall panoramas → {output_width}x{out_h} equirectangular")
+        if not use_wall_stitcher and not use_compose:
             out_img = stitch_equirectangular(
                 paths,
                 pitches,
@@ -139,9 +183,9 @@ async def stitch(
                 num_columns=9,
             )
 
-        # Post-stitch undistort: skip for wall mode to avoid adding distortion.
+        # Post-stitch undistort: skip for wall/compose mode to avoid adding distortion.
         # Full mode: mild pass to clean residual curvature.
-        if not is_wall_mode:
+        if not is_wall_mode and not use_compose:
             out_img = undistort_panorama(
                 out_img,
                 camera_matrix=None,
@@ -154,9 +198,13 @@ async def stitch(
         _, jpeg_buf = cv2.imencode(".jpg", out_img)
         jpeg_bytes = jpeg_buf.tobytes()
 
-        # Save to OUTPUT_DIR for persistence (e.g. for app cards / AsyncStorage)
+        # Save to OUTPUT_DIR (or WALLS_DIR for wall mode) for persistence
         save_id = str(uuid.uuid4())
-        save_path = OUTPUT_DIR / f"panorama_{save_id}.jpg"
+        if is_wall_mode:
+            save_path = WALLS_DIR / f"wall_{save_id}.jpg"
+            print(f"[/stitch] Saved wall panorama → {save_path}")
+        else:
+            save_path = OUTPUT_DIR / f"panorama_{save_id}.jpg"
         save_path.write_bytes(jpeg_bytes)
 
         return Response(
@@ -188,36 +236,40 @@ async def stage(
     ),
 ):
     """
-    Send a stitched panorama to NanoBanana for AI interior staging.
+    Send a stitched panorama for AI interior staging.
 
-    Requires these environment variables to be set on the server:
-      NANOBANANA_API_KEY – NanoBanana bearer token
-      IMGBB_API_KEY      – imgbb.com API key (used to host the panorama publicly)
+    Supports two backends (use one):
+      GOOGLE_API_KEY     – Google AI Studio key (aistudio.google.com/apikey), no imgbb needed
+      NANOBANANA_API_KEY – NanoBanana bearer token (nanobananaapi.ai/api-key)
+      IMGBB_API_KEY      – Required only with NANOBANANA (imgbb.com)
 
     Returns the staged panorama as image/jpeg with header X-Staged-Id.
     """
+    google_key = os.environ.get("GOOGLE_API_KEY", "").strip()
     nb_key = os.environ.get("NANOBANANA_API_KEY", "")
     imgbb_key = os.environ.get("IMGBB_API_KEY", "")
 
-    if not nb_key:
+    if not google_key and not nb_key:
         raise HTTPException(
             status_code=503,
-            detail="NANOBANANA_API_KEY not configured on server. Set the env var and restart.",
+            detail="Set GOOGLE_API_KEY (aistudio.google.com/apikey) or NANOBANANA_API_KEY. Restart server.",
         )
-    if not imgbb_key:
+    if not google_key and not imgbb_key:
         raise HTTPException(
             status_code=503,
-            detail="IMGBB_API_KEY not configured on server. Set the env var and restart.",
+            detail="IMGBB_API_KEY required when using NANOBANANA_API_KEY. Set it and restart.",
         )
 
     image_bytes = await image.read()
     if len(image_bytes) == 0:
         raise HTTPException(status_code=400, detail="Uploaded image is empty")
 
-    print(f"[/stage] prompt={prompt!r}, imageBytes={len(image_bytes)}")
+    print(f"[/stage] prompt={prompt!r}, imageBytes={len(image_bytes)}, backend={'Google' if google_key else 'NanoBanana'}")
 
     try:
-        staged_bytes = nb_stage_panorama(image_bytes, prompt, nb_key, imgbb_key)
+        staged_bytes = nb_stage_panorama(
+            image_bytes, prompt, nb_key, imgbb_key, google_key=google_key or None
+        )
     except TimeoutError as e:
         print(f"[/stage] TIMEOUT: {e}")
         raise HTTPException(status_code=504, detail=str(e))
