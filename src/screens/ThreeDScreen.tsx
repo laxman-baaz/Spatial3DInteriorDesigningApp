@@ -36,17 +36,17 @@ const HORIZONTAL_PADDING = 20;
 const CARD_WIDTH = width - HORIZONTAL_PADDING * 2;
 const THUMBNAIL_HEIGHT = CARD_WIDTH * 0.5;
 
-// Default: preserve the original panorama and only complete missing areas
+// Default: preserve the original panorama — no extra furniture or content
 const DEFAULT_STAGE_PROMPT =
-  'Complete this 360 degree equirectangular panorama by seamlessly filling any missing or incomplete areas. Preserve every captured region exactly as photographed — do not alter colours, furniture, walls, or lighting. Only generate content for the gaps and uncaptured zones so the final image is a seamless, gap-free 360×180 degree panorama.';
+  'Preserve this 360 degree equirectangular panorama exactly as photographed. Do NOT add any furniture, decor, objects, or modals. Do NOT duplicate or fill empty space with generated content. Only use what appears in the given photos — arrange and blend existing content for seamless output. No extra elements.';
 
-// Completion presets — all start with "preserve" to avoid full restyling
+// Completion presets — preserve only, no added content
 const STAGE_PRESETS = [
   // ── Completion / repair (recommended) ──────────────────────────────
-  'Complete this 360 degree equirectangular panorama by seamlessly filling any missing or incomplete areas. Preserve every captured region exactly as photographed — do not alter colours, furniture, walls, or lighting. Only generate content for the gaps and uncaptured zones so the final image is a seamless, gap-free 360×180 degree panorama.',
-  'Fill in the missing parts of this equirectangular panorama. Keep all captured areas pixel-perfect. Seamlessly blend new content into any dark, black, or incomplete zones to produce a complete 360° interior scene.',
+  'Preserve this 360 degree equirectangular panorama exactly as photographed. Do NOT add any furniture, decor, objects, or modals. Do NOT duplicate or fill empty space with generated content. Only use what appears in the given photos — arrange and blend existing content for seamless output. No extra elements.',
+  'Keep all captured areas exactly as photographed. Do NOT add furniture, decor, or objects. Do NOT fill dark or incomplete zones with new content. Only blend and extend what is already in the photos. No duplication, no extra elements.',
   // ── Light staging (preserves structure, adds polish) ───────────────
-  'Lightly enhance this panorama: improve lighting and colour balance only. Do not move or replace any furniture, walls, or existing objects. Keep the room layout exactly as captured.',
+  'Lightly enhance this panorama: improve lighting and colour balance only. Do not add, move, or replace any furniture, walls, or objects. Keep the room layout exactly as captured. No extra content.',
   // ── Full redesign presets (changes everything) ─────────────────────
   'Redesign this interior as a modern minimalist living room — neutral tones, natural light, clean lines.',
   'Redesign this interior as a Scandinavian bedroom — white walls, oak floors, soft linen bedding.',

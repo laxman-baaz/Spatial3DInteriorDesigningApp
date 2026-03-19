@@ -151,7 +151,8 @@ _PANORAMA_ENVIRONMENT_PROMPT = (
     "This is a full 360 degree equirectangular panorama of a real interior room. "
     "Reconstruct the entire 3D navigable world from this single panorama only. "
     "The panorama IS the scene: use it as the complete environment. "
-    "Do not place this image as a texture on a wall or as a picture. Do not generate separate 3D objects; the geometry and appearance must come from this panorama."
+    "Do not place this image as a texture on a wall or as a picture. Do not generate separate 3D objects; the geometry and appearance must come from this panorama. "
+    "Do not add any furniture, decor, objects, or modals that are not visible in the panorama. Use only what is in the given image."
 )
 
 # ── Step 3: submit world generation ──────────────────────────────────────────

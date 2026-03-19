@@ -2,12 +2,13 @@
 Panorama stitching + AI staging + 3D reconstruction backend.
 
 Endpoints:
-  POST /stitch       – stitch photosphere images into equirectangular panorama
+  POST /stitch       – stitch photosphere images into equirectangular panorama (Gemini AI)
   POST /stage        – send panorama to NanoBanana AI for interior staging
   POST /reconstruct – send panorama to WorldLabs Marble for 3D world generation
   GET  /health      – health check
 
 Environment variables (set in backend/.env):
+  GOOGLE_API_KEY      – from aistudio.google.com/apikey (required for /stitch)
   NANOBANANA_API_KEY  – from https://nanobananaapi.ai/api-key
   IMGBB_API_KEY       – from https://imgbb.com
   WORLDLABS_API_KEY   – from https://platform.worldlabs.ai/api-keys
@@ -25,22 +26,20 @@ try:
 except ImportError:
     pass  # dotenv optional – keys can still be set as OS env vars
 
-import cv2
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response
 
-from stitch_equirect import (
-    stitch_equirectangular,
-    undistort_panorama,
-    FOV_H_DEG,
-    FOV_V_DEG,
+from nanobanana import (
+    stage_panorama as nb_stage_panorama,
+    stitch_photosphere_column_then_full,
+    stitch_panorama_google,
+    STITCH_360_PANORAMA_PROMPT,
 )
-from nanobanana import stage_panorama as nb_stage_panorama
 from worldlabs import reconstruct_world, WorldResult
 
 app = FastAPI(
     title="Panorama Stitcher",
-    description="Stitch 27-dot photosphere images into equirectangular panorama using OpenCV",
+    description="Stitch photosphere images into 360° equirectangular panorama using Gemini AI (gemini-3-pro-image-preview)",
     version="1.0.0",
 )
 
@@ -61,13 +60,13 @@ async def stitch(
         ...,
         description='JSON array of {"pitch": deg, "yaw": deg} for each image, same order',
     ),
-    output_width: int = Form(4096, description="Equirectangular width (height = width/2)"),
-    force_full_360: bool = Form(False, description="If true, output always 360×180 (2:1) for e.g. WorldLabs 3D; uncaptured areas black"),
+    output_width: int = Form(4096, description="Equirectangular width (ignored; Gemini outputs its own size)"),
+    force_full_360: bool = Form(False, description="Ignored; Gemini always outputs full panorama"),
 ):
     """
     Upload images and their poses; returns stitched equirectangular panorama as JPEG.
-    Use 1 to 27+ images; partial coverage is allowed. Poses: pitch 0=nadir, 90=horizon,
-    180=zenith; yaw 0..360 (degrees). Set force_full_360=true for 3D export (WorldLabs).
+    Uses Gemini AI (gemini-3-pro-image-preview) for stitching—no OpenCV.
+    Images in TARGET_DOTS order. Poses accepted for API compatibility but not used.
     """
     try:
         poses = json.loads(poses_json)
@@ -82,82 +81,49 @@ async def stitch(
             detail=f"Image count ({len(images)}) must match pose count ({len(poses)})",
         )
 
-    pitches = [float(p["pitch"]) for p in poses]
-    yaws = [float(p["yaw"]) for p in poses]
-    rolls = [float(p.get("roll", 0.0)) for p in poses] # Default 0 for backwards compatibility
+    google_key = os.environ.get("GOOGLE_API_KEY", "").strip()
+    if not google_key:
+        raise HTTPException(
+            status_code=503,
+            detail="GOOGLE_API_KEY not configured. Set it in backend/.env (aistudio.google.com/apikey).",
+        )
 
-    tmp_dir = Path(tempfile.mkdtemp())
-    paths = []
+    image_bytes_list = []
+    for img in images:
+        content = await img.read()
+        if len(content) > 0:
+            image_bytes_list.append(content)
+
+    if len(image_bytes_list) < 1:
+        raise HTTPException(status_code=400, detail="At least 1 valid image required")
+
     try:
-        for i, img in enumerate(images):
-            ext = Path(img.filename or "").suffix or ".jpg"
-            path = tmp_dir / f"img_{i:02d}{ext}"
-            content = await img.read()
-            path.write_bytes(content)
-            paths.append(str(path))
+        # 24 images (8 cols × 3 rings): column-wise first, then all columns
+        if len(image_bytes_list) == 24:
+            jpeg_bytes = stitch_photosphere_column_then_full(image_bytes_list, google_key)
+        else:
+            jpeg_bytes = stitch_panorama_google(
+                image_bytes_list,
+                STITCH_360_PANORAMA_PROMPT,
+                google_key,
+            )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=f"Stitching failed: {e}")
 
-        out_img = stitch_equirectangular(
-            paths,
-            pitches,
-            yaws,
-            rolls,
-            output_width=output_width,
-            # fov_h_deg=60°: closer to real phone portrait camera FOV than the 45° alignment FOV.
-            #   Gives ±30° per image vs 22.5° spacing → 15° horizontal overlap per seam.
-            #   Without overlap, soft blending has nothing to feather across → visible "box" edges.
-            # winner_takes_all=False: weighted average blend in the overlap zone — each pixel is a
-            #   smooth mix of whichever images cover it, weighted by distance-from-centre.
-            #   Eliminates the hard rectangular "photo pasted on sphere" look.
-            # edge_cutoff=0.85: discard the outer 15% of each frame (most distorted corners).
-            #   With fov_h_deg=60°: effective half-FOV = 30°×0.85 = 25.5° → coverage = 51° → 6° overlap ✓
-            # blend_softness=2.0: power-2 falloff gives a smooth Gaussian-like fade at edges.
-            fov_h_deg=FOV_H_DEG + 15.0,
-            fov_v_deg=FOV_V_DEG,
-            force_full_360=force_full_360,
-            winner_takes_all=False,
-            edge_cutoff=0.85,
-            blend_softness=2.0,
-            yaw_auto_correct=True,
-            num_columns=9,
-        )
+    save_id = str(uuid.uuid4())
+    save_path = OUTPUT_DIR / f"panorama_{save_id}.jpg"
+    save_path.write_bytes(jpeg_bytes)
 
-        # Light post-stitch pass — correct FOV (45/60) means geometry is already close to right.
-        # balance=0.8 keeps most of the frame without aggressive cropping.
-        out_img = undistort_panorama(
-            out_img,
-            camera_matrix=None,
-            dist_coeffs=None,
-            use_fisheye=True,
-            balance=0.8,
-        )
-
-        # Encode to JPEG
-        _, jpeg_buf = cv2.imencode(".jpg", out_img)
-        jpeg_bytes = jpeg_buf.tobytes()
-
-        # Save to OUTPUT_DIR for persistence (e.g. for app cards / AsyncStorage)
-        save_id = str(uuid.uuid4())
-        save_path = OUTPUT_DIR / f"panorama_{save_id}.jpg"
-        save_path.write_bytes(jpeg_bytes)
-
-        return Response(
-            content=jpeg_bytes,
-            media_type="image/jpeg",
-            headers={
-                "X-Panorama-Id": save_id,
-                "X-Panorama-Path": str(save_path),
-            },
-        )
-    finally:
-        for p in paths:
-            try:
-                os.unlink(p)
-            except OSError:
-                pass
-        try:
-            tmp_dir.rmdir()
-        except OSError:
-            pass
+    return Response(
+        content=jpeg_bytes,
+        media_type="image/jpeg",
+        headers={
+            "X-Panorama-Id": save_id,
+            "X-Panorama-Path": str(save_path),
+        },
+    )
 
 
 @app.post("/stage")
@@ -169,26 +135,27 @@ async def stage(
     ),
 ):
     """
-    Send a stitched panorama to NanoBanana for AI interior staging.
+    Send a stitched panorama for AI interior staging.
 
-    Requires these environment variables to be set on the server:
-      NANOBANANA_API_KEY – NanoBanana bearer token
-      IMGBB_API_KEY      – imgbb.com API key (used to host the panorama publicly)
+    Supports two backends (use one):
+      GOOGLE_API_KEY     – Google AI Studio (aistudio.google.com/apikey), no imgbb needed
+      NANOBANANA_API_KEY – NanoBanana API (nanobananaapi.ai/api-key) + IMGBB_API_KEY
 
     Returns the staged panorama as image/jpeg with header X-Staged-Id.
     """
+    google_key = os.environ.get("GOOGLE_API_KEY", "").strip()
     nb_key = os.environ.get("NANOBANANA_API_KEY", "")
     imgbb_key = os.environ.get("IMGBB_API_KEY", "")
 
-    if not nb_key:
+    if not google_key and not nb_key:
         raise HTTPException(
             status_code=503,
-            detail="NANOBANANA_API_KEY not configured on server. Set the env var and restart.",
+            detail="Set GOOGLE_API_KEY (aistudio.google.com/apikey) or NANOBANANA_API_KEY. Restart server.",
         )
-    if not imgbb_key:
+    if not google_key and not imgbb_key:
         raise HTTPException(
             status_code=503,
-            detail="IMGBB_API_KEY not configured on server. Set the env var and restart.",
+            detail="IMGBB_API_KEY required when using NANOBANANA_API_KEY. Set it and restart.",
         )
 
     image_bytes = await image.read()
@@ -198,7 +165,9 @@ async def stage(
     print(f"[/stage] prompt={prompt!r}, imageBytes={len(image_bytes)}")
 
     try:
-        staged_bytes = nb_stage_panorama(image_bytes, prompt, nb_key, imgbb_key)
+        staged_bytes = nb_stage_panorama(
+            image_bytes, prompt, nb_key, imgbb_key, google_key=google_key or None
+        )
     except TimeoutError as e:
         print(f"[/stage] TIMEOUT: {e}")
         raise HTTPException(status_code=504, detail=str(e))

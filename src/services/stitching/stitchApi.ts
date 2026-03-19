@@ -1,5 +1,5 @@
 /**
- * Call the Python/OpenCV backend POST /stitch to create equirectangular panorama.
+ * Call the backend POST /stitch to create equirectangular panorama (Gemini AI).
  * Uses react-native-blob-util so we get response as base64 for saving locally.
  */
 import {getStitchApiUrl} from '../../config';
@@ -64,8 +64,13 @@ export async function stitchPanoramaViaApi(
     })),
   ];
 
+  // Two-phase stitching: 9 columns + 1 full = 10 Gemini calls. ~2–3 min each → 25–30 min total.
+  const TIMEOUT_MS = 30 * 60 * 1000;
+
   try {
-    const response = await ReactNativeBlobUtil.fetch(
+    const response = await ReactNativeBlobUtil.config({
+      timeout: TIMEOUT_MS,
+    }).fetch(
       'POST',
       url,
       {
