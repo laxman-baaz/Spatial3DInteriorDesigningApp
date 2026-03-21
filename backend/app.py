@@ -15,7 +15,6 @@ Environment variables (set in backend/.env):
 """
 import json
 import os
-import tempfile
 import uuid
 from pathlib import Path
 
@@ -44,7 +43,10 @@ app = FastAPI(
 )
 
 # Optional: persist stitched panoramas under this dir (e.g. for AsyncStorage / cards)
-OUTPUT_DIR = Path(os.environ.get("PANORAMA_OUTPUT_DIR", tempfile.gettempdir()))
+# Default: backend/output (columns saved to backend/output/columns/)
+OUTPUT_DIR = Path(
+    os.environ.get("PANORAMA_OUTPUT_DIR", str(Path(__file__).parent / "output"))
+)
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 
@@ -55,7 +57,7 @@ def root():
 
 @app.post("/stitch")
 async def stitch(
-    images: list[UploadFile] = File(..., description="Images in TARGET_DOTS order (1–32 or more)"),
+    images: list[UploadFile] = File(..., description="Images in TARGET_DOTS order (24 for 8×3 layout)"),
     poses_json: str = Form(
         ...,
         description='JSON array of {"pitch": deg, "yaw": deg} for each image, same order',
@@ -97,10 +99,16 @@ async def stitch(
     if len(image_bytes_list) < 1:
         raise HTTPException(status_code=400, detail="At least 1 valid image required")
 
+    save_id = str(uuid.uuid4())
     try:
         # 24 images (8 cols × 3 rings): column-wise first, then all columns
         if len(image_bytes_list) == 24:
-            jpeg_bytes = stitch_photosphere_column_then_full(image_bytes_list, google_key)
+            jpeg_bytes = stitch_photosphere_column_then_full(
+                image_bytes_list,
+                google_key,
+                output_dir=OUTPUT_DIR,
+                save_id=save_id,
+            )
         else:
             jpeg_bytes = stitch_panorama_google(
                 image_bytes_list,
@@ -112,7 +120,6 @@ async def stitch(
     except RuntimeError as e:
         raise HTTPException(status_code=500, detail=f"Stitching failed: {e}")
 
-    save_id = str(uuid.uuid4())
     save_path = OUTPUT_DIR / f"panorama_{save_id}.jpg"
     save_path.write_bytes(jpeg_bytes)
 

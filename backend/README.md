@@ -1,6 +1,6 @@
 # Panorama Stitching Backend (Python + OpenCV)
 
-Stitches 32-dot photosphere images into a single **equirectangular panorama** (360×180°, rectangular 2:1 image) using known poses—no feature matching.
+Stitches 24-dot photosphere images (8 columns × 3 rings) into a single **equirectangular panorama** (360×180°, rectangular 2:1 image) using known poses—no feature matching.
 
 ## Setup
 
@@ -33,14 +33,14 @@ pip install -r requirements.txt
 
 ### `POST /stitch`
 
-Upload 32 images (same order as app’s TARGET_DOTS) plus poses; returns the stitched panorama as JPEG.
+Upload 24 images (same order as app’s TARGET_DOTS) plus poses; returns the stitched panorama as JPEG. For 24 images, uses two-phase Gemini stitching (8 columns + full 360°).
 
 **Form fields:**
 
 | Field          | Type | Description |
 |----------------|------|-------------|
-| `images`      | 32 files | Image files in TARGET_DOTS order |
-| `poses_json`  | string   | JSON array of `{"pitch": deg, "yaw": deg}` × 32 |
+| `images`      | 24 files | Image files in TARGET_DOTS order (8 cols × 3 rings) |
+| `poses_json`  | string   | JSON array of `{"pitch": deg, "yaw": deg}` × 24 |
 | `output_width`| int (optional) | Equirectangular width (default 4096; height = width/2) |
 
 **Poses:** `pitch` 0 = nadir, 90 = horizon, 180 = zenith; `yaw` 0..360 (degrees).
@@ -52,13 +52,13 @@ Upload 32 images (same order as app’s TARGET_DOTS) plus poses; returns the sti
 ## Example (curl)
 
 ```bash
-# Build poses_json from app's 32-dot config (pitches and yaws in order)
+# Build poses_json from app's 24-dot config (pitches and yaws in order)
 # Then:
 curl -X POST http://localhost:8000/stitch \
-  -F "poses_json=[{\"pitch\":180,\"yaw\":0},{\"pitch\":150,\"yaw\":0},...]" \
-  -F "images=@img_00.jpg" -F "images=@img_01.jpg" ... (32 times)
+  -F "poses_json=[{\"pitch\":135,\"yaw\":0},{\"pitch\":135,\"yaw\":45},...]" \
+  -F "images=@img_00.jpg" -F "images=@img_01.jpg" ... (24 times)
 ```
 
 ## React Native app
 
-Point the app at this backend (e.g. `http://YOUR_PC_IP:8000`) and POST the 32 captured images + poses when the user taps “Stitch panorama”; use the returned JPEG or the path from headers for storage/AsyncStorage and cards.
+Point the app at this backend (e.g. `http://YOUR_PC_IP:8000`) and POST the 24 captured images + poses when the user taps “Stitch panorama”; use the returned JPEG or the path from headers for storage/AsyncStorage and cards.

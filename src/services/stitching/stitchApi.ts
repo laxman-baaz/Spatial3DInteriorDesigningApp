@@ -64,7 +64,7 @@ export async function stitchPanoramaViaApi(
     })),
   ];
 
-  // Two-phase stitching: 9 columns + 1 full = 10 Gemini calls. ~2–3 min each → 25–30 min total.
+  // Two-phase stitching: 8 columns + 1 full = 9 Gemini calls. ~2–3 min each → 20–30 min total.
   const TIMEOUT_MS = 30 * 60 * 1000;
 
   try {

@@ -12,6 +12,7 @@ Also: Gemini AI stitching for photosphere (column + full 360°) via stitch_panor
 import base64
 import os
 import time
+from pathlib import Path
 
 import requests
 
@@ -46,23 +47,25 @@ def _call_gemini_generate(model: str, api_key: str, payload: dict) -> requests.R
     )
 
 
-# Prompts: pure stitching only, no added content
+# Prompts: pure stitching only, no added content, no duplication
 STITCH_COLUMN_PROMPT = (
-    "TASK: Pure image stitching only. Stitch these images into one seamless vertical panorama "
-    "(one wall/column). Place them in order top-to-bottom, blend edges where they overlap. "
-    "Output must contain ONLY what appears in the provided images. Do NOT add walls, furniture, "
-    "decor, objects, modals, or any content not in the originals. Do NOT duplicate or repeat "
-    "any objects to fill space. Do NOT fill empty areas with generated content. "
-    "Every pixel must come from the input images — only arrange and blend them."
+    "TASK: Pure image stitching only. Place these 3 images into one seamless vertical panorama "
+    "(one column). Stack them top-to-bottom in order. The images have significant vertical overlap "
+    "— align vertical features (walls, windows, cabinets, edges) precisely across the seams. "
+    "Blend the overlapping regions smoothly so no visible horizontal seam lines remain. "
+    "STRICT RULES: Use ONLY pixels from the provided images. Do NOT add any imaginary walls, "
+    "objects, furniture, decor, or content. Do NOT duplicate, repeat, or clone any part of the "
+    "images. Output any resolution/aspect that fits the content."
 )
 
 STITCH_360_PANORAMA_PROMPT = (
-    "TASK: Pure image stitching only. Arrange these exact images into one equirectangular 360° panorama. "
-    "Place them in order (left to right around the room), blend edges where they overlap. "
-    "Output must contain ONLY what appears in the provided images. Do NOT add walls, cupboards, "
-    "furniture, decor, objects, modals, or any content not in the originals. Do NOT duplicate "
-    "or repeat objects to fill space. Do NOT fill empty areas with generated content. "
-    "Every pixel must come from the input images — only arrange and blend them."
+    "TASK: Pure image stitching only. Place these exact images into a perfect 360° equirectangular "
+    "panorama. Arrange them left-to-right around the room in order. Blend seams where they meet. "
+    "STRICT RULES: Use ONLY pixels from the provided images. Do NOT add any imaginary walls, "
+    "objects, furniture, decor, or content. Do NOT duplicate, repeat, or clone any part of the "
+    "images to fill space. Do NOT invent or generate content for empty areas. "
+    "Output any resolution/aspect that fits the content — do not restrict panorama width or "
+    "column width. Preserve full detail and coverage."
 )
 
 
@@ -115,7 +118,11 @@ def stitch_panorama_google(images: list[bytes], prompt: str, api_key: str) -> by
 
 
 def stitch_photosphere_column_then_full(
-    images: list[bytes], api_key: str
+    images: list[bytes],
+    api_key: str,
+    *,
+    output_dir=None,
+    save_id: str | None = None,
 ) -> bytes:
     """
     Two-phase stitching for 24-dot photosphere:
@@ -142,6 +149,14 @@ def stitch_photosphere_column_then_full(
         print(f"[NanoBanana] Phase 1: stitching column {col + 1}/{NUM_COLS}")
         col_pano = stitch_panorama_google(col_images, STITCH_COLUMN_PROMPT, api_key)
         column_panoramas.append(col_pano)
+
+        # Save each stitched column to output folder when output_dir and save_id provided
+        if output_dir is not None and save_id:
+            cols_dir = Path(output_dir) / "columns"
+            cols_dir.mkdir(parents=True, exist_ok=True)
+            col_path = cols_dir / f"{save_id}_column_{col}.jpg"
+            col_path.write_bytes(col_pano)
+            print(f"[NanoBanana] Saved column {col + 1} to {col_path}")
 
     # Phase 2: stitch all columns into 360°
     print(f"[NanoBanana] Phase 2: stitching {NUM_COLS} columns into 360° panorama")

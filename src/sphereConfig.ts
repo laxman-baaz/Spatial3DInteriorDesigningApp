@@ -17,8 +17,8 @@ export interface TargetDot {
 //   CENTER ring — pitch 90°  (horizon)              — 8 shots every 45°
 //   LOWER ring  — pitch 45°  (-45° below horizon)   — 8 shots every 45°
 //
-// FOV: FOV_H=45° (alignment) → 15° horizontal overlap per seam
-// Vertical: 3 rings × 45° spacing with FOV_V=60° → 15° overlap between rings
+// FOV: FOV_H=55° (alignment) → ~10° horizontal overlap per column seam
+// Vertical: 3 rings × 45° spacing with FOV_V=75° → ~30° overlap between rings (better column stitch)
 // ─────────────────────────────────────────────────────────────────────────────
 
 const NUM_COLS = 8;
@@ -55,4 +55,4 @@ export const TARGET_DOTS: TargetDot[] = [
 // Total: 8 + 8 + 8 = 24 photos
 // All rings share yaw: 0°, 45°, 90°, 135°, 180°, 225°, 270°, 315°
 // Horizontal spacing: 45°
-// Vertical coverage: pitch 45° … 135° (±45° from horizon, FOV_V=60° bridges the gaps)
+// Vertical coverage: pitch 45° … 135° (±45° from horizon, FOV_V=75° bridges the gaps)

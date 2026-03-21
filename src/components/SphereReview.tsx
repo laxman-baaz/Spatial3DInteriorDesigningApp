@@ -21,6 +21,9 @@ interface Props {
   /** Match viewfinder size so captured images cover the frame with no gaps */
   viewFinderWidth?: number;
   viewFinderHeight?: number;
+  /** Viewport size for projection (default: full window). Use content area when respecting safe areas. */
+  width?: number;
+  height?: number;
 }
 
 const FOV_H = 60;
@@ -37,8 +40,12 @@ const SphereReview: React.FC<Props> = ({
   orientation,
   viewFinderWidth: propVfw,
   viewFinderHeight: propVfh,
+  width: propWidth,
+  height: propHeight,
 }) => {
-  const {width, height} = Dimensions.get('window');
+  const {width: dimWidth, height: dimHeight} = Dimensions.get('window');
+  const width = propWidth ?? dimWidth;
+  const height = propHeight ?? dimHeight;
   const vfw = propVfw ?? width * 0.8;
   const vfh = propVfh ?? height * 0.7;
   const photoW = vfw * OVERLAP_FACTOR;

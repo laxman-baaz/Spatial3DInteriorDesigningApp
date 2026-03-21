@@ -8,6 +8,7 @@ import {
   Alert,
   ActivityIndicator,
 } from 'react-native';
+import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {
   Camera,
   useCameraDevice,
@@ -23,21 +24,32 @@ import {TARGET_DOTS} from '../sphereConfig';
 import {stitchPanoramaViaApi} from '../services/stitching/stitchApi';
 import {savePanorama, dataUrlToBase64} from '../services/panoramaStorage';
 
-const {width, height} = Dimensions.get('window');
-const VIEWFINDER_WIDTH = width * 0.8;
-const VIEWFINDER_HEIGHT = height * 0.7;
-const FOV_H = 45; // Portrait narrower horizontal FOV
-const FOV_V = 60; // Portrait wider vertical FOV
+const {width: screenWidth, height: screenHeight} = Dimensions.get('window');
+/** Extra inset from top/bottom beyond safe area (status bar, nav bar) */
+const EXTRA_INSET_TOP = 24;
+const EXTRA_INSET_BOTTOM = 24;
+// Wider FOV = more overlap between rings/columns → better stitching (fewer seams, less misalignment)
+const FOV_H = 55; // Horizontal FOV (was 45°; 55° gives ~10° overlap per column seam)
+const FOV_V = 75; // Vertical FOV (was 60°; 75° gives ~30° overlap between rings for column stitch)
 const ALIGN_THRESHOLD_PX = 20;
 /** Must hold the dot aligned for this long (ms) before auto-capture */
 const ALIGN_HOLD_MS = 1000;
 
-// High-resolution capture for panorama: 12MP 4:3 (matches FOV 60°×45°)
+// High-resolution capture for panorama: 12MP 4:3 (matches FOV 75°×55°)
 const PHOTO_TARGET_WIDTH = 4032;
 const PHOTO_TARGET_HEIGHT = 3024;
 
 const PhotosphereScreen = () => {
+  const insets = useSafeAreaInsets();
   const device = useCameraDevice('back');
+
+  // Content area: excludes status bar, nav bar, and extra top/bottom inset
+  const contentWidth = screenWidth;
+  const topInset = insets.top + EXTRA_INSET_TOP;
+  const bottomInset = insets.bottom + EXTRA_INSET_BOTTOM;
+  const contentHeight = screenHeight - topInset - bottomInset;
+  const VIEWFINDER_WIDTH = contentWidth * 0.8;
+  const VIEWFINDER_HEIGHT = contentHeight * 0.7;
 
   // Prefer format with photo resolution closest to 12MP 4:3 for better width/height
   const format = useCameraFormat(device, [
@@ -55,7 +67,7 @@ const PhotosphereScreen = () => {
   const {reset, ...orientation} = useDeviceOrientation();
   const [isCapturing, setIsCapturing] = useState(false);
 
-  // 27-DOT layout: 3 rings × 9 dots, all aligned yaw (0,40,80…320°)
+  // 24-DOT layout: 3 rings × 8 dots, all aligned yaw (0,45,90…315°)
   // upper pitch=135°  center pitch=90°  lower pitch=45°  — from sphereConfig
   const generatePoints = (): Array<{
     id: number;
@@ -78,7 +90,7 @@ const PhotosphereScreen = () => {
   const [points, setPoints] = useState(generatePoints());
   const [isStitching, setIsStitching] = useState(false);
   const capturedCount = points.filter(p => p.captured).length;
-  const totalDots = TARGET_DOTS.length; // 27 (3 rings × 9)
+  const totalDots = TARGET_DOTS.length; // 24 (3 rings × 8)
   const allCaptured = capturedCount === totalDots;
   const hasLoggedAllCaptured = React.useRef(false);
   const alignedPointIdRef = React.useRef<number | null>(null);
@@ -123,9 +135,9 @@ const PhotosphereScreen = () => {
     }
     hasLoggedAllCaptured.current = false;
 
-    const cx = width / 2;
-    const cy = height / 2;
-    const projectionParams = {width, height, fovH: FOV_H, fovV: FOV_V};
+    const cx = contentWidth / 2;
+    const cy = contentHeight / 2;
+    const projectionParams = {width: contentWidth, height: contentHeight, fovH: FOV_H, fovV: FOV_V};
 
     // Find the dot closest to center that is within threshold (actual aim, not first in list)
     let best: {point: (typeof uncapturedPoints)[0]; dist: number} | null = null;
@@ -285,27 +297,50 @@ const PhotosphereScreen = () => {
       </View>
     );
 
+  const cameraWrapperStyle = {
+    position: 'absolute' as const,
+    top: topInset,
+    left: 0,
+    right: 0,
+    height: contentHeight,
+    overflow: 'hidden' as const,
+  };
+
   return (
     <View style={styles.container}>
-      {/* LAYER 1: Live Camera */}
-      <Camera
-        ref={camera}
-        style={StyleSheet.absoluteFill}
-        device={device}
-        isActive={true}
-        photo={true}
-        format={format}
-      />
+      {/* Camera + overlays bounded to safe area (excludes status bar + nav bar) */}
+      <View style={cameraWrapperStyle}>
+        {/* LAYER 1: Live Camera */}
+        <Camera
+          ref={camera}
+          style={StyleSheet.absoluteFill}
+          device={device}
+          isActive={true}
+          photo={true}
+          format={format}
+          resizeMode="contain"
+          androidPreviewViewType="texture-view"
+        />
 
-      {/* LAYER 2: Masked Overlay (Grey Dimension + Photos) */}
-      <MaskedView
-        style={StyleSheet.absoluteFill}
-        maskElement={
+        {/* LAYER 2: Masked Overlay (Grey Dimension + Photos) */}
+        <MaskedView
+          style={StyleSheet.absoluteFill}
+          maskElement={
           <View style={styles.maskContainer}>
             {/* Opaque background keeps content visible */}
             <View style={styles.maskBackground} />
             {/* Transparent hole hides content (showing camera behind) */}
-            <View style={styles.centerHole} />
+            <View
+              style={[
+                styles.centerHole,
+                {
+                  top: contentHeight / 2 - VIEWFINDER_HEIGHT / 2,
+                  left: contentWidth / 2 - VIEWFINDER_WIDTH / 2,
+                  width: VIEWFINDER_WIDTH,
+                  height: VIEWFINDER_HEIGHT,
+                },
+              ]}
+            />
           </View>
         }>
         <SphereReview
@@ -313,33 +348,37 @@ const PhotosphereScreen = () => {
           orientation={orientation}
           viewFinderWidth={VIEWFINDER_WIDTH}
           viewFinderHeight={VIEWFINDER_HEIGHT}
+          width={contentWidth}
+          height={contentHeight}
         />
       </MaskedView>
 
-      {/* LAYER 3: Target Dots & Guides (viewfinder 80% × 70% of screen) */}
-      <SphereOverlay
-        orientation={orientation}
-        points={points}
-        width={width}
-        height={height}
-        fovH={FOV_H}
-        fovV={FOV_V}
-        viewFinderWidth={VIEWFINDER_WIDTH}
-        viewFinderHeight={VIEWFINDER_HEIGHT}
-        alignThresholdPx={ALIGN_THRESHOLD_PX}
-      />
+        {/* LAYER 3: Target Dots & Guides (viewfinder 80% × 70% of content area) */}
+        <SphereOverlay
+          orientation={orientation}
+          points={points}
+          width={contentWidth}
+          height={contentHeight}
+          fovH={FOV_H}
+          fovV={FOV_V}
+          viewFinderWidth={VIEWFINDER_WIDTH}
+          viewFinderHeight={VIEWFINDER_HEIGHT}
+          alignThresholdPx={ALIGN_THRESHOLD_PX}
+        />
+      </View>
 
       {/* Progress HUD */}
-      <View style={styles.hud}>
+      <View style={[styles.hud, {top: topInset + 16}]}>
         <Text style={styles.hudText}>
           {capturedCount} / {totalDots}
         </Text>
       </View>
 
-      {/* Create panorama — always visible; uses all captured images (1–27) */}
+      {/* Create panorama — always visible; uses all captured images (1–24) */}
       <TouchableOpacity
         style={[
           styles.stitchButton,
+          {bottom: bottomInset + 16},
           (isStitching || capturedCount === 0) && styles.stitchButtonDisabled,
         ]}
         onPress={handleStitch}
@@ -372,16 +411,11 @@ const styles = StyleSheet.create({
   },
   centerHole: {
     position: 'absolute',
-    top: height / 2 - VIEWFINDER_HEIGHT / 2,
-    left: width / 2 - VIEWFINDER_WIDTH / 2,
-    width: VIEWFINDER_WIDTH,
-    height: VIEWFINDER_HEIGHT,
     borderRadius: 16,
     backgroundColor: 'transparent', // The mask is transparent, so camera shows through.
   },
   hud: {
     position: 'absolute',
-    top: 60,
     alignSelf: 'center',
     backgroundColor: 'rgba(0, 0, 0, 0.7)',
     paddingHorizontal: 20,
@@ -395,7 +429,6 @@ const styles = StyleSheet.create({
   },
   stitchButton: {
     position: 'absolute',
-    bottom: 48,
     alignSelf: 'center',
     backgroundColor: 'rgba(0, 150, 255, 0.9)',
     paddingHorizontal: 24,

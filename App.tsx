@@ -1,6 +1,7 @@
 import React from 'react';
 import {NavigationContainer} from '@react-navigation/native';
 import {createNativeStackNavigator} from '@react-navigation/native-stack';
+import {SafeAreaProvider} from 'react-native-safe-area-context';
 import {enableScreens} from 'react-native-screens';
 
 import MainTabs from './src/navigation/MainTabs';
@@ -16,7 +17,8 @@ const Stack = createNativeStackNavigator();
 
 function App(): React.JSX.Element {
   return (
-    <NavigationContainer>
+    <SafeAreaProvider>
+      <NavigationContainer>
       <Stack.Navigator screenOptions={{headerShown: false}}>
         <Stack.Screen name="MainTabs" component={MainTabs} />
         <Stack.Screen
@@ -29,6 +31,7 @@ function App(): React.JSX.Element {
         />
       </Stack.Navigator>
     </NavigationContainer>
+    </SafeAreaProvider>
   );
 }
 

@@ -13,21 +13,21 @@ Coordinate alignment with app (sphereConfig.TARGET_DOTS + projection.ts):
   is projected onto the correct 45°×60° region of the sphere that the app dot-layout assumes.
   Changing these without changing the app will cause geometric misalignment (boxy, ghost, shifted).
 
-27-DOT LAYOUT (3 rings × 9 dots, all aligned yaw):
-  All rings: yaw = 0, 40, 80, 120, 160, 200, 240, 280, 320  (every 40°)
+24-DOT LAYOUT (3 rings × 8 dots, all aligned yaw) — matches sphereConfig.ts:
+  All rings: yaw = 0, 45, 90, 135, 180, 225, 270, 315  (every 45°)
   Upper: pitch=135°  Center: pitch=90°  Lower: pitch=45°
   → Each output column of 3 stacked images shares the SAME horizontal seam positions.
-  → 360° / 9 = 40° spacing. With stitcher fov_h_deg=60° (±30° per image) there is
-    20° horizontal overlap per seam — ideal for soft weighted blending (no "boxy" look).
+  → 360° / 8 = 45° spacing. With stitcher fov_h_deg=60° (±30° per image) there is
+    15° horizontal overlap per seam — ideal for soft weighted blending (no "boxy" look).
   → Vertical overlap ≈ 15° (FOV_V=60° minus 45° ring spacing).
 """
 import numpy as np
 import cv2
 
 DEG2RAD = np.pi / 180
-# CRITICAL: must match PhotosphereScreen.tsx  FOV_H = 45  /  FOV_V = 60
-FOV_H_DEG = 45.0
-FOV_V_DEG = 60.0
+# CRITICAL: must match PhotosphereScreen.tsx  FOV_H = 55  /  FOV_V = 75
+FOV_H_DEG = 55.0
+FOV_V_DEG = 75.0
 
 
 def uv_to_direction(u: np.ndarray, v: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -385,7 +385,7 @@ def stitch_equirectangular(
     edge_cutoff: float = 1.0,
     winner_takes_all: bool = True,
     column_first: bool = False,
-    num_columns: int = 9,
+    num_columns: int = 8,
     yaw_auto_correct: bool = True,
 ) -> np.ndarray:
     """
@@ -394,7 +394,7 @@ def stitch_equirectangular(
     If force_full_360=True (e.g. for WorldLabs 3D), output is always 360×180 (2:1); uncaptured areas are black.
     If undistort_inputs=True (default), each input image is lens-undistorted before projection to reduce barrel/fisheye.
 
-    Defaults tuned for the 27-dot 3×9 uniform layout (FOV_H=45° app, 9 shots × 40° = 360°):
+    Defaults tuned for the 24-dot 3×8 uniform layout (FOV_H=45° app, 8 shots × 45° = 360°):
       fov_h_deg=50°    — stitcher uses 5° more than the app alignment FOV (45°).
                          This gives ±25° per image → 5° horizontal overlap at every seam, so
                          zero-overlap black seams become impossible. The outer 2.5° on each edge
@@ -608,13 +608,13 @@ def stitch_and_save(
     winner_takes_all: bool = True,
     edge_cutoff: float = 1.0,
     column_first: bool = False,
-    num_columns: int = 9,
+    num_columns: int = 8,
     yaw_auto_correct: bool = True,
 ) -> str:
     """Stitch and write panorama to output_path. Returns output_path.
-    Defaults match the 27-dot 3×9 uniform layout:
+    Defaults match the 24-dot 3×8 uniform layout:
       winner_takes_all=True, edge_cutoff=1.0, column_first=False,
-      yaw_auto_correct=True (ORB drift correction), num_columns=9.
+      yaw_auto_correct=True (ORB drift correction), num_columns=8.
     If undistort=True (default), applies cv2.fisheye.undistortImage or cv2.undistort
     after stitching to reduce barrel/fisheye effect. Pass camera_matrix and dist_coeffs
     for calibrated values, or leave None for defaults."""
