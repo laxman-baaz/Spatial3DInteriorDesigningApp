@@ -96,7 +96,6 @@ export function RoomScanProvider({children}: {children: React.ReactNode}) {
 
       stitchPanoramaViaApi(payload, {
         outputWidth: 2048,
-        forceFull360: false,
         mode: 'wall',
       })
         .then(result => {

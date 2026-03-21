@@ -1,5 +1,5 @@
 /**
- * Call the Python/OpenCV backend POST /stitch to create equirectangular panorama.
+ * Call the backend POST /stitch: wall mode (OpenCV) or nanobanana (4 walls → 360°).
  * Uses react-native-blob-util so we get response as base64 for saving locally.
  */
 import {getStitchApiUrl} from '../../config';
@@ -37,22 +37,20 @@ export async function stitchPanoramaViaApi(
   images: StitchApiImage[],
   options: {
     outputWidth?: number;
-    forceFull360?: boolean;
-    mode?: 'full' | 'wall' | 'nanobanana';
+    mode?: 'wall' | 'nanobanana';
     composeImages?: StitchApiComposeImage[];
   } = {},
 ): Promise<StitchApiResult> {
   const start = Date.now();
   const outputWidth = options.outputWidth ?? 4096;
-  const forceFull360 = options.forceFull360 ?? false;
-  const mode = options.mode ?? 'full';
+  const mode = options.mode ?? 'wall';
   const composeImages = options.composeImages;
   const url = getStitchApiUrl('/stitch');
   const isNanobanana = mode === 'nanobanana' && composeImages && composeImages.length === 4;
   const imageCount = isNanobanana ? 4 : images.length;
 
   console.log(
-    `${LOG_TAG} Calling POST ${url} with ${imageCount} image(s), outputWidth=${outputWidth}, forceFull360=${forceFull360}, mode=${mode}`,
+    `${LOG_TAG} Calling POST ${url} with ${imageCount} image(s), outputWidth=${outputWidth}, mode=${mode}`,
   );
 
   if (!isNanobanana && images.length < 1) {
@@ -108,7 +106,6 @@ export async function stitchPanoramaViaApi(
   const body = [
     {name: 'poses_json', data: posesJson},
     {name: 'output_width', data: String(outputWidth)},
-    {name: 'force_full_360', data: forceFull360 ? 'true' : 'false'},
     {name: 'mode', data: mode},
     ...(isNanobanana
       ? resolvedPaths.map((path, i) => ({
