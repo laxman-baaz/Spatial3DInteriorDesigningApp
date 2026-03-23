@@ -6,7 +6,6 @@ import {
   Dimensions,
   TouchableOpacity,
   Alert,
-  ActivityIndicator,
 } from 'react-native';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {
@@ -21,25 +20,25 @@ import SphereReview from '../components/SphereReview';
 import MaskedView from '@react-native-masked-view/masked-view';
 import {project3DTo2D} from '../utils/projection';
 import {TARGET_DOTS} from '../sphereConfig';
-import {stitchPanoramaViaApi} from '../services/stitching/stitchApi';
 import {savePanorama, dataUrlToBase64} from '../services/panoramaStorage';
+import type {StitchApiImage} from '../services/stitching/stitchApi';
 
 const {width: screenWidth, height: screenHeight} = Dimensions.get('window');
 /** Extra inset from top/bottom beyond safe area (status bar, nav bar) */
 const EXTRA_INSET_TOP = 24;
 const EXTRA_INSET_BOTTOM = 24;
 // Wider FOV = more overlap between rings/columns → better stitching (fewer seams, less misalignment)
-const FOV_H = 55; // Horizontal FOV (was 45°; 55° gives ~10° overlap per column seam)
-const FOV_V = 75; // Vertical FOV (was 60°; 75° gives ~30° overlap between rings for column stitch)
+const FOV_H = 60; // Horizontal FOV
+const FOV_V = 75; // Vertical FOV
 const ALIGN_THRESHOLD_PX = 20;
 /** Must hold the dot aligned for this long (ms) before auto-capture */
 const ALIGN_HOLD_MS = 1000;
 
-// High-resolution capture for panorama: 12MP 4:3 (matches FOV 75°×55°)
+// High-resolution capture for panorama: 12MP 4:3 (matches FOV 75°×60°)
 const PHOTO_TARGET_WIDTH = 4032;
 const PHOTO_TARGET_HEIGHT = 3024;
 
-const PhotosphereScreen = () => {
+const PhotosphereScreen = ({navigation}: {navigation: any}) => {
   const insets = useSafeAreaInsets();
   const device = useCameraDevice('back');
 
@@ -88,7 +87,6 @@ const PhotosphereScreen = () => {
   };
 
   const [points, setPoints] = useState(generatePoints());
-  const [isStitching, setIsStitching] = useState(false);
   const capturedCount = points.filter(p => p.captured).length;
   const totalDots = TARGET_DOTS.length; // 24 (3 rings × 8)
   const allCaptured = capturedCount === totalDots;
@@ -137,7 +135,12 @@ const PhotosphereScreen = () => {
 
     const cx = contentWidth / 2;
     const cy = contentHeight / 2;
-    const projectionParams = {width: contentWidth, height: contentHeight, fovH: FOV_H, fovV: FOV_V};
+    const projectionParams = {
+      width: contentWidth,
+      height: contentHeight,
+      fovH: FOV_H,
+      fovV: FOV_V,
+    };
 
     // Find the dot closest to center that is within threshold (actual aim, not first in list)
     let best: {point: (typeof uncapturedPoints)[0]; dist: number} | null = null;
@@ -214,8 +217,7 @@ const PhotosphereScreen = () => {
     }
   }, [hasPermission]);
 
-  const handleStitch = async () => {
-    if (isStitching) return;
+  const handleStitch = () => {
     const withPaths = points.filter(p => p.captured && p.imagePath);
     if (withPaths.length === 0) {
       Alert.alert(
@@ -224,70 +226,22 @@ const PhotosphereScreen = () => {
       );
       return;
     }
+    const stitchImages: StitchApiImage[] = withPaths.map(p => ({
+      path: p.imagePath!,
+      pitch: p.pitch,
+      yaw: p.yaw,
+      roll: p.roll ?? 0,
+    }));
     console.log(
-      '[Photosphere] Stitch: sending',
-      withPaths.length,
-      'images to API',
+      '[Photosphere] Navigate to 3D Gallery with',
+      stitchImages.length,
+      'images to stitch',
     );
-    setIsStitching(true);
-    try {
-      const result = await stitchPanoramaViaApi(
-        withPaths.map(p => ({
-          path: p.imagePath!,
-          pitch: p.pitch,
-          yaw: p.yaw,
-          roll: p.roll ?? 0,
-        })),
-        {outputWidth: 4096, forceFull360: true},
-      );
-      console.log('[Photosphere] Stitch result:', {
-        success: result.success,
-        panoramaId: result.panoramaId,
-        hasImageData: !!result.imageData,
-        imageDataLength: result.imageData?.length ?? 0,
-        error: result.error,
-      });
-      if (result.success) {
-        const id = result.panoramaId ?? `pano_${Date.now()}`;
-        const base64 = result.imageData
-          ? dataUrlToBase64(result.imageData)
-          : null;
-        if (base64) {
-          console.log(
-            '[Photosphere] Saving panorama locally, id=',
-            id,
-            'base64Len=',
-            base64.length,
-          );
-          await savePanorama(id, base64);
-          console.log('[Photosphere] Panorama saved to storage');
-        } else {
-          console.log('[Photosphere] No base64 from API - not saving locally');
-        }
-        const time =
-          result.durationMs != null
-            ? ` (${Math.round(result.durationMs / 1000)}s)`
-            : '';
-        Alert.alert(
-          'Panorama ready',
-          base64
-            ? `Saved to Recent Projects & 3D Gallery.${time}`
-            : `Stitched successfully.${time}${
-                result.panoramaId ? `\nID: ${result.panoramaId}` : ''
-              }`,
-        );
-      } else {
-        Alert.alert('Stitching failed', result.error ?? 'Unknown error');
-      }
-    } catch (e) {
-      console.error('[Photosphere] Stitch error:', e);
-      Alert.alert(
-        'Stitching failed',
-        e instanceof Error ? e.message : String(e),
-      );
-    } finally {
-      setIsStitching(false);
-    }
+    // Navigate to 3D Gallery immediately; stitch runs there with placeholder card + activity indicator
+    navigation.navigate('MainTabs', {
+      screen: '3D Model',
+      params: {stitchImages, startStitch: true},
+    });
   };
 
   if (!device || !hasPermission)
@@ -326,32 +280,32 @@ const PhotosphereScreen = () => {
         <MaskedView
           style={StyleSheet.absoluteFill}
           maskElement={
-          <View style={styles.maskContainer}>
-            {/* Opaque background keeps content visible */}
-            <View style={styles.maskBackground} />
-            {/* Transparent hole hides content (showing camera behind) */}
-            <View
-              style={[
-                styles.centerHole,
-                {
-                  top: contentHeight / 2 - VIEWFINDER_HEIGHT / 2,
-                  left: contentWidth / 2 - VIEWFINDER_WIDTH / 2,
-                  width: VIEWFINDER_WIDTH,
-                  height: VIEWFINDER_HEIGHT,
-                },
-              ]}
-            />
-          </View>
-        }>
-        <SphereReview
-          points={points}
-          orientation={orientation}
-          viewFinderWidth={VIEWFINDER_WIDTH}
-          viewFinderHeight={VIEWFINDER_HEIGHT}
-          width={contentWidth}
-          height={contentHeight}
-        />
-      </MaskedView>
+            <View style={styles.maskContainer}>
+              {/* Opaque background keeps content visible */}
+              <View style={styles.maskBackground} />
+              {/* Transparent hole hides content (showing camera behind) */}
+              <View
+                style={[
+                  styles.centerHole,
+                  {
+                    top: contentHeight / 2 - VIEWFINDER_HEIGHT / 2,
+                    left: contentWidth / 2 - VIEWFINDER_WIDTH / 2,
+                    width: VIEWFINDER_WIDTH,
+                    height: VIEWFINDER_HEIGHT,
+                  },
+                ]}
+              />
+            </View>
+          }>
+          <SphereReview
+            points={points}
+            orientation={orientation}
+            viewFinderWidth={VIEWFINDER_WIDTH}
+            viewFinderHeight={VIEWFINDER_HEIGHT}
+            width={contentWidth}
+            height={contentHeight}
+          />
+        </MaskedView>
 
         {/* LAYER 3: Target Dots & Guides (viewfinder 80% × 70% of content area) */}
         <SphereOverlay
@@ -374,23 +328,19 @@ const PhotosphereScreen = () => {
         </Text>
       </View>
 
-      {/* Create panorama — always visible; uses all captured images (1–24) */}
+      {/* Create panorama — navigates to 3D Gallery with placeholder + stitch in background */}
       <TouchableOpacity
         style={[
           styles.stitchButton,
           {bottom: bottomInset + 16},
-          (isStitching || capturedCount === 0) && styles.stitchButtonDisabled,
+          capturedCount === 0 && styles.stitchButtonDisabled,
         ]}
         onPress={handleStitch}
-        disabled={isStitching || capturedCount === 0}
+        disabled={capturedCount === 0}
         activeOpacity={0.8}>
-        {isStitching ? (
-          <ActivityIndicator color="#fff" size="small" />
-        ) : (
-          <Text style={styles.stitchButtonText}>
-            Create panorama {capturedCount > 0 ? `(${capturedCount})` : ''}
-          </Text>
-        )}
+        <Text style={styles.stitchButtonText}>
+          Create panorama {capturedCount > 0 ? `(${capturedCount})` : ''}
+        </Text>
       </TouchableOpacity>
     </View>
   );

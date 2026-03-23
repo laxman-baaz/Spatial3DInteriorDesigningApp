@@ -1,4 +1,4 @@
-import React, {useState, useCallback} from 'react';
+import React, {useState, useCallback, useEffect, useRef} from 'react';
 import {
   StyleSheet,
   View,
@@ -18,16 +18,19 @@ import {
   Linking,
 } from 'react-native';
 import {SafeAreaView} from 'react-native-safe-area-context';
-import {useFocusEffect} from '@react-navigation/native';
+import {useFocusEffect, useRoute, useNavigation} from '@react-navigation/native';
 import Icon from 'react-native-vector-icons/Ionicons';
 import {
   loadPanoramas,
+  savePanorama,
   saveStaged,
   saveWorld3D,
+  dataUrlToBase64,
   type PanoramaItem,
   type World3DMeta,
 } from '../services/panoramaStorage';
 import {stageWithAI} from '../services/nanoBanana/nanoBananaService';
+import {stitchPanoramaViaApi, type StitchApiImage} from '../services/stitching/stitchApi';
 import {reconstructWorld} from '../services/worldLabs/worldLabsService';
 import PanoramaViewer from '../components/PanoramaViewer';
 
@@ -64,8 +67,21 @@ const EmptyState = () => (
   </View>
 );
 
+const STITCHING_PLACEHOLDER_ID = '_stitching_placeholder';
+
+type RouteParams = {
+  stitchImages?: StitchApiImage[];
+  startStitch?: boolean;
+};
+
 export default function ThreeDScreen() {
+  const route = useRoute();
+  const navigation = useNavigation();
+  const params = route.params as RouteParams | undefined;
+  const hasConsumedStitchParams = useRef(false);
+
   const [models, setModels] = useState<PanoramaItem[]>([]);
+  const [isStitchingPanorama, setIsStitchingPanorama] = useState(false);
 
   // AI Staging state
   const [stagingId,     setStagingId]     = useState<string | null>(null);
@@ -89,6 +105,41 @@ export default function ThreeDScreen() {
       });
     }, []),
   );
+
+  // ── Stitch panorama (from Photosphere Create panorama) ──────────────────────
+  useEffect(() => {
+    const stitchImages = params?.stitchImages;
+    const startStitch = params?.startStitch;
+    if (!stitchImages?.length || !startStitch || hasConsumedStitchParams.current) return;
+    hasConsumedStitchParams.current = true;
+    (navigation as any).setParams?.({stitchImages: undefined, startStitch: undefined});
+
+    const runStitch = async () => {
+      setIsStitchingPanorama(true);
+      try {
+        const result = await stitchPanoramaViaApi(stitchImages, {
+          outputWidth: 4096,
+          forceFull360: true,
+        });
+        if (result.success) {
+          const id = result.panoramaId ?? `pano_${Date.now()}`;
+          const base64 = result.imageData ? dataUrlToBase64(result.imageData) : null;
+          if (base64) {
+            await savePanorama(id, base64);
+            setModels(await loadPanoramas());
+          }
+        } else {
+          Alert.alert('Stitching failed', result.error ?? 'Unknown error');
+        }
+      } catch (e) {
+        console.error('[3D Gallery] Stitch error:', e);
+        Alert.alert('Stitching failed', e instanceof Error ? e.message : String(e));
+      } finally {
+        setIsStitchingPanorama(false);
+      }
+    };
+    runStitch();
+  }, [params?.stitchImages, params?.startStitch, navigation]);
 
   // ── AI Staging handlers ───────────────────────────────────────────────────
   const openStageModal = useCallback((item: PanoramaItem) => {
@@ -188,10 +239,28 @@ export default function ThreeDScreen() {
   // ── Card renderer ─────────────────────────────────────────────────────────
   const renderModelItem = useCallback(
     ({item}: {item: PanoramaItem}) => {
+      const isPlaceholder = item.id === STITCHING_PLACEHOLDER_ID;
       const isStaging       = stagingId       === item.id;
       const isReconstructing = reconstructingId === item.id;
       const displayUri = item.stagedImageUri ?? item.imageUri;
       const world      = item.world3d;
+
+      if (isPlaceholder) {
+        return (
+          <View style={[styles.modelCard, styles.stitchingPlaceholderCard]}>
+            <View style={[styles.modelThumbnail, styles.stitchingPlaceholderThumb]}>
+              <ActivityIndicator size="large" color="#6200ee" />
+              <Text style={styles.stitchingPlaceholderText}>Stitching panorama…</Text>
+            </View>
+            <View style={styles.modelInfo}>
+              <View style={styles.modelInfoText}>
+                <Text style={[styles.modelTitle, {color: '#888'}]}>Creating panorama</Text>
+                <Text style={styles.modelDate}>Please wait</Text>
+              </View>
+            </View>
+          </View>
+        );
+      }
 
       return (
         <View style={styles.modelCard}>
@@ -344,12 +413,17 @@ export default function ThreeDScreen() {
       </View>
 
       <FlatList
-        data={models}
+        data={
+          isStitchingPanorama
+            ? [{id: STITCHING_PLACEHOLDER_ID, title: 'Stitching…', date: '', imageUri: ''} as PanoramaItem, ...models]
+            : models
+        }
         renderItem={renderModelItem}
         keyExtractor={item => item.id}
-        ListEmptyComponent={EmptyState}
+        ListEmptyComponent={isStitchingPanorama ? null : EmptyState}
         contentContainerStyle={styles.listContent}
         showsVerticalScrollIndicator={false}
+        extraData={{isStitchingPanorama}}
       />
 
       {/* ── AI Stage Modal ─────────────────────────────────────────────── */}
@@ -548,6 +622,19 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 3,
     marginBottom: 16,
+  },
+  stitchingPlaceholderCard: {
+    opacity: 0.85,
+    backgroundColor: '#f5f5f5',
+  },
+  stitchingPlaceholderThumb: {
+    backgroundColor: '#e8e8e8',
+  },
+  stitchingPlaceholderText: {
+    marginTop: 12,
+    fontSize: 14,
+    color: '#666',
+    fontWeight: '500',
   },
   modelThumbnail: {
     width: CARD_WIDTH,

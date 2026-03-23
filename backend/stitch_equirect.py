@@ -25,8 +25,8 @@ import numpy as np
 import cv2
 
 DEG2RAD = np.pi / 180
-# CRITICAL: must match PhotosphereScreen.tsx  FOV_H = 55  /  FOV_V = 75
-FOV_H_DEG = 55.0
+# CRITICAL: must match PhotosphereScreen.tsx  FOV_H = 60  /  FOV_V = 75
+FOV_H_DEG = 60.0
 FOV_V_DEG = 75.0
 
 
@@ -131,7 +131,7 @@ def sample_rectilinear_grid(
 def _default_input_camera_matrix(width: int, height: int) -> np.ndarray:
     """Camera matrix for a single input image; used for input undistortion.
     Focal length derived from the actual camera FOV (wider than the app's 45° alignment FOV).
-    Phone main cameras in portrait are ~65-72° H; we use 68° as a safe middle ground."""
+    Phone main cameras in portrait are ~60-72° H; we use 68° as a safe middle ground."""
     cx = (width - 1) * 0.5
     cy = (height - 1) * 0.5
     # Use real camera FOV (~68°H) for undistortion, not the app's alignment FOV (45°)

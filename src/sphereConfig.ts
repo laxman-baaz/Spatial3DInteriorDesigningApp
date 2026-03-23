@@ -17,8 +17,8 @@ export interface TargetDot {
 //   CENTER ring — pitch 90°  (horizon)              — 8 shots every 45°
 //   LOWER ring  — pitch 45°  (-45° below horizon)   — 8 shots every 45°
 //
-// FOV: FOV_H=55° (alignment) → ~10° horizontal overlap per column seam
-// Vertical: 3 rings × 45° spacing with FOV_V=75° → ~30° overlap between rings (better column stitch)
+// FOV: FOV_H=60° (alignment) → horizontal overlap per column seam
+// Vertical: 3 rings × 45° spacing with FOV_V=75° → overlap between rings for column stitch
 // ─────────────────────────────────────────────────────────────────────────────
 
 const NUM_COLS = 8;

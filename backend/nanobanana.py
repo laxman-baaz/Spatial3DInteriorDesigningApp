@@ -49,13 +49,16 @@ def _call_gemini_generate(model: str, api_key: str, payload: dict) -> requests.R
 
 # Prompts: pure stitching only, no added content, no duplication
 STITCH_COLUMN_PROMPT = (
-    "TASK: Pure image stitching only. Place these 3 images into one seamless vertical panorama "
-    "(one column). Stack them top-to-bottom in order. The images have significant vertical overlap "
-    "— align vertical features (walls, windows, cabinets, edges) precisely across the seams. "
-    "Blend the overlapping regions smoothly so no visible horizontal seam lines remain. "
-    "STRICT RULES: Use ONLY pixels from the provided images. Do NOT add any imaginary walls, "
-    "objects, furniture, decor, or content. Do NOT duplicate, repeat, or clone any part of the "
-    "images. Output any resolution/aspect that fits the content."
+    "TASK: Pure image stitching only. Place these 3 images into one seamless vertical column panorama. "
+    "LAYOUT CONTEXT: Image 1 (top) was captured at +45° above horizon, Image 2 (middle) at horizon "
+    "(flat/level), Image 3 (bottom) at -45° below horizon. The top and bottom images may appear "
+    "slightly enlarged or curved due to sphere perspective — treat the CENTER image (Image 2) as the "
+    "root/reference. Flatten and align the top and bottom images to match the center's scale and "
+    "geometry. Stack them top-to-bottom, making all three appear as one flat vertical strip. "
+    "Align vertical features (walls, windows, cabinets, edges) precisely across seams. Blend "
+    "overlapping regions smoothly so no visible horizontal seam lines remain. "
+    "STRICT RULES: Use ONLY pixels from the provided images. Do NOT add imaginary content. "
+    "Output any resolution/aspect that fits the content."
 )
 
 STITCH_360_PANORAMA_PROMPT = (
