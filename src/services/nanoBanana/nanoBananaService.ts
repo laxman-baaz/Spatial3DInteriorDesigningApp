@@ -9,13 +9,13 @@
  */
 
 import ReactNativeBlobUtil from 'react-native-blob-util';
-import { getStitchApiUrl } from '../../config';
+import {getStitchApiUrl} from '../../config';
 
 const LOG = '[NanoBananaService]';
 
 export interface StagingResult {
-  stagedBase64: string;  // raw base64 JPEG – save with panoramaStorage.saveStaged()
-  stagedId: string;      // X-Staged-Id header from backend
+  stagedBase64: string; // raw base64 JPEG – save with panoramaStorage.saveStaged()
+  stagedId: string; // X-Staged-Id header from backend
 }
 
 /**
@@ -27,6 +27,7 @@ export interface StagingResult {
 export async function stageWithAI(
   panoramaUri: string,
   prompt: string,
+  panoramaId?: string,
 ): Promise<StagingResult> {
   const url = getStitchApiUrl('/stage');
 
@@ -39,12 +40,14 @@ export async function stageWithAI(
   // Set a generous 10-minute timeout so the request doesn't abort mid-flight.
   const TIMEOUT_MS = 10 * 60 * 1000;
 
-  console.log(`${LOG} POST ${url} | prompt="${prompt}" | file=${filePath} | timeout=${TIMEOUT_MS}ms`);
+  console.log(
+    `${LOG} POST ${url} | prompt="${prompt}" | file=${filePath} | timeout=${TIMEOUT_MS}ms`,
+  );
 
-  const resp = await ReactNativeBlobUtil.config({ timeout: TIMEOUT_MS }).fetch(
+  const resp = await ReactNativeBlobUtil.config({timeout: TIMEOUT_MS}).fetch(
     'POST',
     url,
-    { 'Content-Type': 'multipart/form-data' },
+    {'Content-Type': 'multipart/form-data'},
     [
       {
         name: 'image',
@@ -56,6 +59,7 @@ export async function stageWithAI(
         name: 'prompt',
         data: prompt,
       },
+      ...(panoramaId ? [{name: 'panorama_id', data: panoramaId} as const] : []),
     ],
   );
 
@@ -83,5 +87,5 @@ export async function stageWithAI(
     `${LOG} staging OK | stagedId=${stagedId} | base64Len=${stagedBase64.length}`,
   );
 
-  return { stagedBase64, stagedId };
+  return {stagedBase64, stagedId};
 }

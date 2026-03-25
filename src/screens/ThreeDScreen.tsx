@@ -21,7 +21,6 @@ import {SafeAreaView} from 'react-native-safe-area-context';
 import {useFocusEffect, useRoute, useNavigation} from '@react-navigation/native';
 import Icon from 'react-native-vector-icons/Ionicons';
 import {
-  loadPanoramas,
   savePanorama,
   saveStaged,
   saveWorld3D,
@@ -29,10 +28,15 @@ import {
   type PanoramaItem,
   type World3DMeta,
 } from '../services/panoramaStorage';
+import {
+  loadPanoramasMergedWithServer,
+  STITCHING_PLACEHOLDER_ID,
+} from '../services/panoramaApi';
 import {stageWithAI} from '../services/nanoBanana/nanoBananaService';
 import {stitchPanoramaViaApi, type StitchApiImage} from '../services/stitching/stitchApi';
 import {reconstructWorld} from '../services/worldLabs/worldLabsService';
 import PanoramaViewer from '../components/PanoramaViewer';
+import {FETCH_PANORAMAS_FROM_SERVER} from '../config';
 
 const {width} = Dimensions.get('window');
 const HORIZONTAL_PADDING = 20;
@@ -67,8 +71,6 @@ const EmptyState = () => (
   </View>
 );
 
-const STITCHING_PLACEHOLDER_ID = '_stitching_placeholder';
-
 type RouteParams = {
   stitchImages?: StitchApiImage[];
   startStitch?: boolean;
@@ -97,13 +99,30 @@ export default function ThreeDScreen() {
   // Panorama viewer: tap a card to view the 360° panorama
   const [viewerItem, setViewerItem] = useState<PanoramaItem | null>(null);
 
+  const [isLoadingPanoramasFromServer, setIsLoadingPanoramasFromServer] =
+    useState(false);
+
+  const refreshModels = useCallback(async () => {
+    if (FETCH_PANORAMAS_FROM_SERVER) {
+      setIsLoadingPanoramasFromServer(true);
+    }
+    try {
+      const list = await loadPanoramasMergedWithServer();
+      console.log('[3D Gallery] loaded', list.length, 'panorama(s)');
+      setModels(list);
+    } catch (e) {
+      console.error('[3D Gallery] load failed', e);
+    } finally {
+      if (FETCH_PANORAMAS_FROM_SERVER) {
+        setIsLoadingPanoramasFromServer(false);
+      }
+    }
+  }, []);
+
   useFocusEffect(
     useCallback(() => {
-      loadPanoramas().then(list => {
-        console.log('[3D Gallery] loaded', list.length, 'panorama(s)');
-        setModels(list);
-      });
-    }, []),
+      refreshModels();
+    }, [refreshModels]),
   );
 
   // ── Stitch panorama (from Photosphere Create panorama) ──────────────────────
@@ -126,7 +145,7 @@ export default function ThreeDScreen() {
           const base64 = result.imageData ? dataUrlToBase64(result.imageData) : null;
           if (base64) {
             await savePanorama(id, base64);
-            setModels(await loadPanoramas());
+            await refreshModels();
           }
         } else {
           Alert.alert('Stitching failed', result.error ?? 'Unknown error');
@@ -139,7 +158,7 @@ export default function ThreeDScreen() {
       }
     };
     runStitch();
-  }, [params?.stitchImages, params?.startStitch, navigation]);
+  }, [params?.stitchImages, params?.startStitch, navigation, refreshModels]);
 
   // ── AI Staging handlers ───────────────────────────────────────────────────
   const openStageModal = useCallback((item: PanoramaItem) => {
@@ -155,17 +174,21 @@ export default function ThreeDScreen() {
     setStageModal(null);
     setStagingId(pano.id);
     try {
-      const {stagedBase64, stagedId} = await stageWithAI(pano.imageUri, stagePrompt);
+      const {stagedBase64, stagedId} = await stageWithAI(
+        pano.imageUri,
+        stagePrompt,
+        pano.id,
+      );
       console.log(`[3D Gallery] staging done stagedId=${stagedId}`);
       await saveStaged(pano.id, stagedBase64);
-      setModels(await loadPanoramas());
+      await refreshModels();
       Alert.alert('AI Staging complete', 'Your staged panorama is ready!');
     } catch (e: any) {
       Alert.alert('Staging failed', e?.message ?? 'Check backend and API keys.');
     } finally {
       setStagingId(null);
     }
-  }, [stageModal, stagePrompt]);
+  }, [stageModal, stagePrompt, refreshModels]);
 
   // ── 3D Reconstruction handlers ────────────────────────────────────────────
   const openWorldModal = useCallback((item: PanoramaItem) => {
@@ -200,6 +223,7 @@ export default function ThreeDScreen() {
         pano.title,
         worldPrompt,
         worldModel,
+        pano.id,
       );
 
       const meta: World3DMeta = {
@@ -215,7 +239,7 @@ export default function ThreeDScreen() {
       };
 
       await saveWorld3D(pano.id, meta);
-      setModels(await loadPanoramas());
+      await refreshModels();
 
       Alert.alert(
         '3D World ready!',
@@ -234,7 +258,7 @@ export default function ThreeDScreen() {
     } finally {
       setReconstructingId(null);
     }
-  }, [worldModal, worldPrompt, worldModel]);
+  }, [worldModal, worldPrompt, worldModel, refreshModels]);
 
   // ── Card renderer ─────────────────────────────────────────────────────────
   const renderModelItem = useCallback(
@@ -407,9 +431,15 @@ export default function ThreeDScreen() {
 
       <View style={styles.header}>
         <Text style={styles.headerTitle}>3D Gallery</Text>
-        <TouchableOpacity>
-          <Icon name="filter-outline" size={24} color="#333" />
-        </TouchableOpacity>
+        <View style={styles.headerTrailing}>
+          {isLoadingPanoramasFromServer && (
+            <ActivityIndicator
+              size="small"
+              color="#6200ee"
+              accessibilityLabel="Loading panoramas from server"
+            />
+          )}
+        </View>
       </View>
 
       <FlatList
@@ -607,6 +637,12 @@ const styles = StyleSheet.create({
     borderBottomColor: '#f0f0f0',
   },
   headerTitle: {fontSize: 28, fontWeight: 'bold', color: '#333'},
+  headerTrailing: {
+    width: 28,
+    height: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
 
   listContent: {padding: HORIZONTAL_PADDING, paddingBottom: 24},
 

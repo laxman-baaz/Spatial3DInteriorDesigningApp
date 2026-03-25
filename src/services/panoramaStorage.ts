@@ -3,6 +3,7 @@
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import ReactNativeBlobUtil from 'react-native-blob-util';
+import {syncPanoramaMetadata} from './panoramaApi';
 
 const STORAGE_KEY = '@panoramas';
 const LOG_TAG = '[PanoramaStorage]';
@@ -77,6 +78,8 @@ export async function savePanorama(
   list.unshift(item);
   await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(list));
   console.log(`${LOG_TAG} savePanorama: saved id=${id}, imageUri=${imageUri}, totalPanoramas=${list.length}`);
+
+  void syncPanoramaMetadata(id, item.title, item.date);
 
   return item;
 }

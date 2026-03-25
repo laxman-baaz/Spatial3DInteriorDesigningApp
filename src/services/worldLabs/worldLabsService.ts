@@ -16,19 +16,19 @@
  */
 
 import ReactNativeBlobUtil from 'react-native-blob-util';
-import { getStitchApiUrl } from '../../config';
+import {getStitchApiUrl} from '../../config';
 
 const LOG = '[WorldLabsService]';
 
 export interface World3DResult {
-  worldId:         string;
-  marbleUrl:       string;
-  thumbnailUrl:    string | null;
-  caption:         string | null;
-  panoUrl:         string | null;
-  spzUrl100k:      string | null;
-  spzUrl500k:      string | null;
-  spzUrlFull:      string | null;
+  worldId: string;
+  marbleUrl: string;
+  thumbnailUrl: string | null;
+  caption: string | null;
+  panoUrl: string | null;
+  spzUrl100k: string | null;
+  spzUrl500k: string | null;
+  spzUrlFull: string | null;
   colliderMeshUrl: string | null; // GLB
 }
 
@@ -43,8 +43,9 @@ export interface World3DResult {
 export async function reconstructWorld(
   panoramaUri: string,
   displayName: string,
-  textPrompt: string  = '',
-  model: string       = 'Marble 0.1-plus',
+  textPrompt: string = '',
+  model: string = 'Marble 0.1-plus',
+  panoramaId?: string,
 ): Promise<World3DResult> {
   const url = getStitchApiUrl('/reconstruct');
 
@@ -59,10 +60,10 @@ export async function reconstructWorld(
     `${LOG} POST ${url} | model="${model}" | display="${displayName}" | file=${filePath}`,
   );
 
-  const resp = await ReactNativeBlobUtil.config({ timeout: TIMEOUT_MS }).fetch(
+  const resp = await ReactNativeBlobUtil.config({timeout: TIMEOUT_MS}).fetch(
     'POST',
     url,
-    { 'Content-Type': 'multipart/form-data' },
+    {'Content-Type': 'multipart/form-data'},
     [
       {
         name: 'image',
@@ -70,9 +71,10 @@ export async function reconstructWorld(
         type: 'image/jpeg',
         data: ReactNativeBlobUtil.wrap(filePath),
       },
-      { name: 'display_name', data: displayName },
-      { name: 'text_prompt',  data: textPrompt },
-      { name: 'model',        data: model },
+      {name: 'display_name', data: displayName},
+      {name: 'text_prompt', data: textPrompt},
+      {name: 'model', data: model},
+      ...(panoramaId ? [{name: 'panorama_id', data: panoramaId} as const] : []),
     ],
   );
 
@@ -80,30 +82,35 @@ export async function reconstructWorld(
   console.log(`${LOG} response status=${status}`);
 
   if (status < 200 || status >= 300) {
-    const body = resp.text();
-    throw new Error(`/reconstruct returned HTTP ${status}: ${body}`);
+    const body = await resp.text();
+    throw new Error(
+      `/reconstruct returned HTTP ${status}: ${String(body).slice(0, 500)}`,
+    );
   }
 
   let json: any;
   try {
-    json = JSON.parse(resp.text());
+    const text = await resp.text();
+    json = JSON.parse(text);
   } catch {
     throw new Error('Invalid JSON response from /reconstruct');
   }
 
   if (!json.world_id) {
-    throw new Error(`Unexpected /reconstruct response: ${JSON.stringify(json)}`);
+    throw new Error(
+      `Unexpected /reconstruct response: ${JSON.stringify(json)}`,
+    );
   }
 
   const result: World3DResult = {
-    worldId:         json.world_id,
-    marbleUrl:       json.marble_url,
-    thumbnailUrl:    json.thumbnail_url    ?? null,
-    caption:         json.caption          ?? null,
-    panoUrl:         json.pano_url         ?? null,
-    spzUrl100k:      json.spz_url_100k     ?? null,
-    spzUrl500k:      json.spz_url_500k     ?? null,
-    spzUrlFull:      json.spz_url_full     ?? null,
+    worldId: json.world_id,
+    marbleUrl: json.marble_url,
+    thumbnailUrl: json.thumbnail_url ?? null,
+    caption: json.caption ?? null,
+    panoUrl: json.pano_url ?? null,
+    spzUrl100k: json.spz_url_100k ?? null,
+    spzUrl500k: json.spz_url_500k ?? null,
+    spzUrlFull: json.spz_url_full ?? null,
     colliderMeshUrl: json.collider_mesh_url ?? null,
   };
 

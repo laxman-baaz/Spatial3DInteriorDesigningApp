@@ -6,26 +6,42 @@ import {
   TouchableOpacity,
   FlatList,
   StatusBar,
-  Dimensions,
   Image,
+  ActivityIndicator,
 } from 'react-native';
 import {SafeAreaView} from 'react-native-safe-area-context';
 import {useFocusEffect} from '@react-navigation/native';
 import Icon from 'react-native-vector-icons/Ionicons';
-import {loadPanoramas, type PanoramaItem} from '../services/panoramaStorage';
-
-const {width} = Dimensions.get('window');
+import {loadPanoramasMergedWithServer} from '../services/panoramaApi';
+import type {PanoramaItem} from '../services/panoramaStorage';
+import {FETCH_PANORAMAS_FROM_SERVER} from '../config';
 
 export default function HomeScreen({navigation}: any) {
   const [scans, setScans] = useState<PanoramaItem[]>([]);
+  const [isLoadingPanoramasFromServer, setIsLoadingPanoramasFromServer] =
+    useState(false);
+
+  const refreshScans = useCallback(async () => {
+    if (FETCH_PANORAMAS_FROM_SERVER) {
+      setIsLoadingPanoramasFromServer(true);
+    }
+    try {
+      const list = await loadPanoramasMergedWithServer();
+      console.log('[HomeScreen] panoramas: got', list.length, 'item(s)');
+      setScans(list);
+    } catch (e) {
+      console.error('[HomeScreen] load failed', e);
+    } finally {
+      if (FETCH_PANORAMAS_FROM_SERVER) {
+        setIsLoadingPanoramasFromServer(false);
+      }
+    }
+  }, []);
 
   useFocusEffect(
     useCallback(() => {
-      loadPanoramas().then((list) => {
-        console.log('[HomeScreen] loadPanoramas: got', list.length, 'item(s)');
-        setScans(list);
-      });
-    }, [])
+      refreshScans();
+    }, [refreshScans]),
   );
 
   const renderScanItem = ({item}: {item: PanoramaItem}) => (
@@ -96,18 +112,27 @@ export default function HomeScreen({navigation}: any) {
             </TouchableOpacity>
           </View>
 
-          <FlatList
-            data={scans}
-            renderItem={renderScanItem}
-            keyExtractor={item => item.id}
-            showsVerticalScrollIndicator={false}
-            contentContainerStyle={styles.listContent}
-            ListEmptyComponent={
-              <View style={styles.emptyState}>
-                <Text style={styles.emptyText}>No recent scans</Text>
-              </View>
-            }
-          />
+          {isLoadingPanoramasFromServer ? (
+            <View
+              style={styles.recentsLoading}
+              accessibilityLabel="Loading panoramas from server"
+              importantForAccessibility="yes">
+              <ActivityIndicator size="large" color="#6200ee" />
+            </View>
+          ) : (
+            <FlatList
+              data={scans}
+              renderItem={renderScanItem}
+              keyExtractor={item => item.id}
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={styles.listContent}
+              ListEmptyComponent={
+                <View style={styles.emptyState}>
+                  <Text style={styles.emptyText}>No recent scans</Text>
+                </View>
+              }
+            />
+          )}
         </View>
       </View>
     </SafeAreaView>
@@ -118,6 +143,12 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#f8f9fa',
+  },
+  recentsLoading: {
+    flex: 1,
+    minHeight: 160,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   header: {
     flexDirection: 'row',

@@ -1,0 +1,20 @@
+# Optional Postgres for the panorama backend.
+# Run: docker compose -f docker-compose.postgres.yml up -d
+# Then in backend/.env:
+#   DATABASE_URL=postgresql+psycopg2://interior:interior@localhost:5432/interior_design
+#   BACKEND_PUBLIC_URL=http://YOUR_LAN_IP:8000
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: interior
+      POSTGRES_PASSWORD: interior
+      POSTGRES_DB: interior_design
+    ports:
+      - '5432:5432'
+    volumes:
+      - pgdata_interior:/var/lib/postgresql/data
+
+volumes:
+  pgdata_interior:
